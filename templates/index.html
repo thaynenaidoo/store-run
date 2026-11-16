@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10211f">
+  <title>Store Run | Household supply</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+  <section class="auth-screen" id="auth-screen" hidden>
+    <div class="auth-art" aria-hidden="true"><span class="auth-sun"></span><span class="auth-grid"></span></div>
+    <div class="auth-panel">
+      <a class="wordmark wordmark-dark" href="/" aria-label="Store Run home"><span class="wordmark-mark">S</span><span>STORE RUN<small>HOUSEHOLD SUPPLY</small></span></a>
+      <p class="eyebrow" id="auth-eyebrow">HOUSEHOLD ACCESS</p>
+      <h1 id="auth-title">Your next run,<br>in good order.</h1>
+      <p class="auth-copy" id="auth-copy">Sign in to see the shared list and latest prices.</p>
+      <form id="auth-form" class="form-stack">
+        <label id="auth-name-wrap" hidden>Your name<input name="name" autocomplete="name" maxlength="60"></label>
+        <label>Username<input name="username" autocomplete="username" required minlength="3" maxlength="40"></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required minlength="10" maxlength="200"></label>
+        <button class="button button-primary button-wide" id="auth-submit" type="submit">Sign in <span aria-hidden="true">↗</span></button>
+      </form>
+      <p class="form-message" id="auth-message" role="status"></p>
+      <p class="auth-foot">Shared household data. Individual sign-ins.</p>
+    </div>
+  </section>
+
+  <div class="app-shell" id="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="wordmark" href="#overview" aria-label="Store Run overview"><span class="wordmark-mark">S</span><span>STORE RUN<small>HOUSEHOLD SUPPLY</small></span></a>
+      <div class="side-label">THE HOUSEHOLD</div>
+      <nav class="primary-nav" aria-label="Main navigation">
+        <button class="nav-link active" data-view="overview"><span class="nav-icon">◫</span><span>Overview</span><span class="nav-count" id="nav-count">0</span></button>
+        <button class="nav-link" data-view="store-lists"><span class="nav-icon">▦</span><span>Store lists</span></button>
+        <button class="nav-link" data-view="shopping"><span class="nav-icon">＋</span><span>Shopping list</span></button>
+        <button class="nav-link" data-view="catalog"><span class="nav-icon">▤</span><span>Catalog</span></button>
+        <button class="nav-link" data-view="history"><span class="nav-icon">▥</span><span>History</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="route-card"><span class="route-light"></span><div><b>HOUSEHOLD RUN</b><small>Shared and up to date</small></div></div>
+        <div class="sidebar-foot">LOCAL NETWORK <span>·</span> PRIVATE</div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="mobile-brand"><span class="wordmark-mark">S</span><span>STORE RUN</span></div>
+        <div class="topbar-spacer"></div>
+        <button class="topbar-button export-button" id="export-button" title="Export purchase history as CSV"><span aria-hidden="true">⇩</span><span>Export</span></button>
+        <button class="topbar-button member-button" id="member-button" hidden title="Add a household member"><span aria-hidden="true">♙</span><span>Members</span></button>
+        <div class="user-chip"><span class="user-dot" id="user-dot">N</span><span id="user-name">Household</span></div>
+        <button class="icon-button" id="logout-button" title="Sign out" aria-label="Sign out">↗</button>
+      </header>
+
+      <section class="view active" id="view-overview">
+        <div class="page-heading">
+          <div><p class="eyebrow"><span class="live-dot"></span> HOUSEHOLD DISPATCH <span class="heading-slash">/</span> <span id="today-label">TODAY</span></p><h1>The next run<span class="heading-period">.</span></h1><p class="page-subtitle">A clear view of what’s needed, what it costs, and where to find it.</p></div>
+          <button class="button button-dark" data-open-item><span aria-hidden="true">＋</span> Add item</button>
+        </div>
+
+        <div class="metrics-grid">
+          <button class="metric metric-lime" data-view="shopping" aria-label="Open active shopping list"><span class="metric-top"><span>ON THE LIST</span><span class="metric-mark">01</span></span><strong id="metric-list">0</strong><small>items ready to pick up · open list ↗</small></button>
+          <button class="metric metric-cream" data-view="shopping" aria-label="View estimated active shopping run"><span class="metric-top"><span>ESTIMATED RUN</span><span class="metric-mark">02</span></span><strong id="metric-estimate">$0</strong><small>based on saved prices · view run ↗</small></button>
+          <button class="metric metric-coral" data-view="history" data-history-month="current" aria-label="Open this month’s spend breakdown"><span class="metric-top"><span>SPENT THIS MONTH</span><span class="metric-mark">03</span></span><strong id="metric-spend">$0</strong><small>dated purchases · see breakdown ↗</small></button>
+          <button class="metric metric-dark" data-view="catalog" aria-label="Open household catalog"><span class="metric-top"><span>IN THE CATALOG</span><span class="metric-mark">04</span></span><strong id="metric-catalog">0</strong><small>usual quantities and prices · browse ↗</small></button>
+        </div>
+
+        <div class="overview-grid">
+          <section class="surface list-surface">
+            <div class="section-heading"><div><p class="eyebrow">READY WHEN YOU ARE</p><h2>Next shopping list</h2></div><button class="text-button" data-view="shopping">Open list <span aria-hidden="true">↗</span></button></div>
+            <div id="overview-shopping" class="shopping-rows"></div>
+            <div class="empty-state" id="overview-empty"><span class="empty-symbol">＋</span><h3>No stops on the route</h3><p>Add catalog items when you’re running low.</p><button class="button button-dark" data-view="catalog">Browse catalog</button></div>
+          </section>
+          <section class="surface spend-surface">
+            <div class="section-heading"><div><p class="eyebrow">PRICE CHECK</p><h2>Spend on record</h2></div><span class="period-tag" id="period-tag">6 MONTHS</span></div>
+            <div class="spend-chart" id="spend-chart"></div>
+            <div class="chart-legend"><span class="legend-dot"></span><span id="chart-legend-copy">Dated purchases</span></div>
+            <p class="legacy-note" id="legacy-note" hidden></p>
+          </section>
+        </div>
+
+        <section class="surface recent-surface">
+          <div class="section-heading"><div><p class="eyebrow">LATEST ENTRIES</p><h2>Purchase log</h2></div><span class="section-caption">MOST RECENT FIRST</span></div>
+          <div class="purchase-table-wrap"><table class="purchase-table"><thead><tr><th>ITEM</th><th>STORE</th><th>WHEN</th><th class="align-right">TOTAL</th><th></th></tr></thead><tbody id="recent-purchases"></tbody></table></div>
+          <div class="empty-inline" id="purchases-empty">Your purchase log will appear here as you mark items bought.</div>
+        </section>
+      </section>
+
+      <section class="view" id="view-shopping">
+        <div class="page-heading"><div><p class="eyebrow"><span class="live-dot"></span> THE ROUTE</p><h1>Shopping list<span class="heading-period">.</span></h1><p class="page-subtitle">Grouped by store, ready for a quick order or a run through town.</p></div><button class="button button-dark" data-open-item><span aria-hidden="true">＋</span> New catalog item</button></div>
+        <div class="list-toolbar"><label class="select-wrap"><span>ADD FROM CATALOG</span><select id="add-item-select"><option value="">Choose an item…</option></select></label><button class="button button-lime" id="add-selected-button">Add to list <span aria-hidden="true">＋</span></button><div class="toolbar-total"><small>ESTIMATED TOTAL</small><strong id="shopping-total">$0</strong></div></div>
+        <div id="full-shopping" class="store-groups"></div>
+        <div class="empty-state full-empty" id="shopping-empty"><span class="empty-symbol">↗</span><h3>Your list is clear.</h3><p>Add items from the catalog to build the next run.</p><button class="button button-dark" data-view="catalog">Go to catalog</button></div>
+      </section>
+
+      <section class="view" id="view-store-lists">
+        <div class="page-heading"><div><p class="eyebrow"><span class="live-dot"></span> REGULAR SHOPPING</p><h1>Store lists<span class="heading-period">.</span></h1><p class="page-subtitle">Your usual items by retailer, with quantities and estimated costs from the CSVs.</p></div></div>
+        <div class="fixed-list-toolbar">
+          <label class="select-wrap"><span>CHOOSE A STORE</span><select id="fixed-store-select" aria-label="Choose a store"></select></label>
+          <div class="pricing-source-note"><span>LIVE PRICE SOURCE</span><strong>Use each item’s retailer</strong><small>Grocer reference: PAK’nSAVE Highland Park</small><small>Chemist Warehouse location if prompted: Botany, Auckland</small></div>
+          <div class="fixed-list-summary"><div><small>ITEMS</small><strong id="fixed-item-count">0</strong></div><div><small>USUAL UNITS</small><strong id="fixed-quantity-count">0</strong></div><div><small>ESTIMATED STORE TOTAL</small><strong id="fixed-store-total">$0</strong></div></div>
+          <div class="fixed-list-commands"><p class="price-refresh-time" id="price-refresh-time">Prices have not been refreshed yet</p><div class="fixed-list-buttons"><button class="button button-quiet" id="refresh-prices-button"><span aria-hidden="true">↻</span> Update prices</button><button class="button button-lime" id="use-store-list-button"><span aria-hidden="true">＋</span> Add store list to run</button><a class="button button-dark paknsave-handoff-button" id="paknsave-handoff-button" href="https://www.paknsave.co.nz/" target="_blank" rel="noopener" hidden><span aria-hidden="true">↗</span> Copy list &amp; open PAK’nSAVE</a></div></div>
+        </div>
+        <p class="fixed-list-hint">Adjust a usual quantity here to update the saved store list. Changes are shared with the household. Use ↗ beside an item to open its retailer product or search results. Update prices checks the selected retailer’s saved product links; Pak’n Save uses Grocer at Highland Park when no retailer price is available.</p>
+        <div class="fixed-list-table" id="fixed-list-table"></div>
+        <div class="empty-state full-empty" id="fixed-list-empty"><span class="empty-symbol">▦</span><h3>No store lists found.</h3><p>Imported items will appear here grouped by their store.</p></div>
+      </section>
+
+      <section class="view" id="view-catalog">
+        <div class="page-heading"><div><p class="eyebrow"><span class="live-dot"></span> HOUSEHOLD INVENTORY</p><h1>Catalog<span class="heading-period">.</span></h1><p class="page-subtitle">Usual quantities, preferred stores, and the prices you last paid.</p></div><button class="button button-dark" data-open-item><span aria-hidden="true">＋</span> Add item</button></div>
+        <div class="catalog-toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><input id="catalog-search" type="search" placeholder="Find an item or store" autocomplete="off"></label><span id="catalog-count" class="section-caption"></span></div>
+        <div class="catalog-list" id="catalog-list"></div>
+        <div class="empty-state full-empty" id="catalog-empty"><span class="empty-symbol">▤</span><h3>No items yet.</h3><p>Your household catalog will build as you add regulars.</p><button class="button button-dark" data-open-item>Add the first item</button></div>
+      </section>
+
+      <section class="view" id="view-history">
+        <div class="page-heading"><div><p class="eyebrow"><span class="live-dot"></span> HOUSEHOLD SPENDING</p><h1>History<span class="heading-period">.</span></h1><p class="page-subtitle" id="history-range">Last 12 months of dated purchases.</p></div><div class="history-heading-actions"><button class="topbar-button" id="history-refresh-button" title="Refresh history"><span aria-hidden="true">↻</span><span>Refresh</span></button><button class="button button-dark" id="add-manual-spend-button"><span aria-hidden="true">＋</span> Add manual spend</button></div></div>
+        <div class="metrics-grid history-metrics">
+          <article class="metric metric-lime"><div class="metric-top"><span>12-MONTH SPEND</span><span class="metric-mark">01</span></div><strong id="history-total">$0</strong><small>dated purchases only</small></article>
+          <article class="metric metric-cream"><div class="metric-top"><span>MONTHLY AVERAGE</span><span class="metric-mark">02</span></div><strong id="history-average">$0</strong><small>months with spending</small></article>
+          <article class="metric metric-dark"><div class="metric-top"><span>RECORDED PURCHASES</span><span class="metric-mark">03</span></div><strong id="history-purchase-count">0</strong><small>with known dates</small></article>
+          <article class="metric metric-coral"><div class="metric-top"><span>UNDATED IMPORTS</span><span class="metric-mark">04</span></div><strong id="history-undated-total">$0</strong><small id="history-undated-count">0 entries · year unknown</small></article>
+        </div>
+
+        <section class="surface history-chart-surface">
+          <div class="section-heading"><div><p class="eyebrow">MONTH BY MONTH</p><h2>Spending rhythm</h2></div><span class="period-tag">12 MONTHS</span></div>
+          <div class="history-chart" id="history-chart"></div>
+          <div class="history-legend"><span><i class="legend-food"></i> Food &amp; beverages</span><span><i class="legend-household"></i> Household</span></div>
+        </section>
+
+        <div class="history-breakdown-grid">
+          <section class="surface history-breakdown">
+            <div class="section-heading"><div><p class="eyebrow">WHAT YOU BUY</p><h2>Food &amp; household</h2></div></div>
+            <div id="history-categories" class="history-bars"></div>
+          </section>
+          <section class="surface history-breakdown">
+            <div class="section-heading"><div><p class="eyebrow">WHERE YOU SHOP</p><h2>Spend by store</h2></div></div>
+            <div id="history-stores" class="history-bars"></div>
+          </section>
+        </div>
+
+        <div class="history-lower-grid">
+          <section class="surface recent-surface history-months-surface">
+            <div class="section-heading"><div><p class="eyebrow">FULL YEAR</p><h2>Monthly totals</h2></div><span class="section-caption">DATED PURCHASES</span></div>
+            <div class="purchase-table-wrap"><table class="purchase-table history-month-table"><thead><tr><th>MONTH</th><th class="align-right">FOOD</th><th class="align-right">HOUSEHOLD</th><th class="align-right">TOTAL</th></tr></thead><tbody id="history-months"></tbody></table></div>
+            <div class="empty-inline" id="history-empty" hidden>No dated purchases yet. Mark items bought to start your history.</div>
+            <p class="history-legacy-note" id="history-legacy-note" hidden></p>
+          </section>
+          <section class="surface highlights-surface">
+            <div class="section-heading"><div><p class="eyebrow">THE PATTERNS</p><h2>Highlights</h2></div></div>
+            <div id="history-highlights" class="highlight-list"></div>
+          </section>
+        </div>
+        <section class="surface recent-surface history-transactions-surface">
+          <div class="section-heading"><div><p class="eyebrow">DATED ENTRIES</p><h2>Purchase records</h2></div><span class="section-caption">LAST 12 MONTHS</span></div>
+          <div class="purchase-table-wrap"><table class="purchase-table"><thead><tr><th>ITEM</th><th>CATEGORY</th><th>STORE</th><th>DATE</th><th class="align-right">TOTAL</th><th></th></tr></thead><tbody id="history-purchases"></tbody></table></div>
+          <div class="empty-inline" id="history-purchases-empty" hidden>No dated purchase records in this period.</div>
+        </section>
+        <section class="surface recent-surface manual-spend-surface">
+          <div class="section-heading"><div><p class="eyebrow">MONTHLY ADJUSTMENTS</p><h2>Manual spend entries</h2></div><span class="section-caption">NOT ITEMIZED</span></div>
+          <div class="purchase-table-wrap"><table class="purchase-table"><thead><tr><th>MONTH</th><th>CATEGORY</th><th>NOTE</th><th class="align-right">AMOUNT</th><th></th></tr></thead><tbody id="manual-spend-rows"></tbody></table></div>
+          <div class="empty-inline" id="manual-spend-empty" hidden>No manual monthly entries yet.</div>
+        </section>
+      </section>
+      <footer class="app-footer"><span>STORE RUN <i>·</i> HOUSEHOLD SUPPLY</span><span>SHARED HOUSEHOLD DATA</span></footer>
+    </main>
+  </div>
+
+  <dialog class="modal" id="item-modal">
+    <form id="item-form" class="modal-form">
+      <div class="modal-heading"><div><p class="eyebrow">CATALOG ENTRY</p><h2 id="item-modal-title">Add an item</h2></div><button class="icon-button modal-close" type="button" data-close-modal aria-label="Close">×</button></div>
+      <input type="hidden" name="id">
+      <label>Item name<input name="name" required maxlength="140" placeholder="e.g. Rolled oats 1kg"></label>
+      <div class="form-grid"><label>Category<input name="category" maxlength="60" placeholder="Pantry"></label><label>Store<input name="store" maxlength="100" placeholder="Preferred store"></label></div>
+      <div class="form-grid"><label>Usual quantity<input name="forecast_qty" type="number" min="0" step="1" value="1" required></label><label>Unit price<input name="unit_price" type="number" min="0" step="0.01" value="0" required></label></div>
+      <label>Retailer product link <span class="optional">OPTIONAL</span><input name="product_url" type="url" maxlength="500" placeholder="https://"></label>
+      <div class="form-grid"><label>Grocer product ID <span class="optional">OPTIONAL</span><input name="grocer_product_id" type="number" min="1" step="1" placeholder="Matched on refresh"></label><label>Grocer product link <span class="optional">OPTIONAL</span><input name="grocer_product_url" type="url" maxlength="500" placeholder="https://grocer.nz/product/…"></label></div>
+      <p class="match-target" id="grocer-match-target">Match a catalog item to its exact Grocer product.</p>
+      <div class="item-price-refresh"><button class="button button-quiet" type="button" id="refresh-item-price-button" disabled><span aria-hidden="true">↻</span> Update this item’s price</button><a id="open-retailer-product" class="text-button" target="_blank" rel="noopener" hidden>Open retailer page ↗</a><span id="item-price-refresh-time" class="price-refresh-time">Save a Grocer or retailer product link to enable refresh.</span></div>
+      <p class="item-refresh-message" id="item-refresh-message" role="status" aria-live="polite"></p>
+      <div class="grocer-match-tools"><label>Find exact Grocer product<input id="grocer-product-search" type="search" maxlength="100" placeholder="Search name or pack size"></label><button class="button button-quiet" type="button" id="grocer-product-search-button">Search Grocer</button></div>
+      <div class="grocer-search-results" id="grocer-search-results"></div>
+      <p class="form-message" id="item-message" role="status"></p>
+      <div class="modal-actions"><button class="button button-quiet" type="button" data-close-modal>Cancel</button><button class="button button-primary" type="submit">Save item <span aria-hidden="true">↗</span></button></div>
+    </form>
+  </dialog>
+
+  <dialog class="modal modal-small" id="member-modal">
+    <form id="member-form" class="modal-form">
+      <div class="modal-heading"><div><p class="eyebrow">SHARED ACCESS</p><h2>Add a member</h2></div><button class="icon-button modal-close" type="button" data-close-modal aria-label="Close">×</button></div>
+      <p class="modal-copy">They’ll have their own sign-in and share this household’s list and price history.</p>
+      <label>Display name<input name="name" autocomplete="name" required maxlength="60"></label>
+      <label>Username<input name="username" autocomplete="off" required minlength="3" maxlength="40"></label>
+      <label>Temporary password<input name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="200"></label>
+      <p class="form-message" id="member-message" role="status"></p>
+      <div class="modal-actions"><button class="button button-quiet" type="button" data-close-modal>Cancel</button><button class="button button-primary" type="submit">Create sign-in <span aria-hidden="true">↗</span></button></div>
+    </form>
+  </dialog>
+
+  <dialog class="modal modal-small" id="manual-spend-modal">
+    <form id="manual-spend-form" class="modal-form">
+      <div class="modal-heading"><div><p class="eyebrow">MONTHLY TOTAL</p><h2>Add manual spend</h2></div><button class="icon-button modal-close" type="button" data-close-modal aria-label="Close">×</button></div>
+      <p class="modal-copy">Use this for a monthly total when you don’t have individual items. It will update History without creating a fake purchase or date.</p>
+      <label>Month<input name="month" type="month" required></label>
+      <label>Category<select name="category" required><option value="Food">Food</option><option value="Household">Household</option></select></label>
+      <label>Amount<input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></label>
+      <label>Note <span class="optional">OPTIONAL</span><input name="note" maxlength="160" placeholder="e.g. October groceries"></label>
+      <p class="form-message" id="manual-spend-message" role="status"></p>
+      <div class="modal-actions"><button class="button button-quiet" type="button" data-close-modal>Cancel</button><button class="button button-primary" type="submit">Save monthly spend <span aria-hidden="true">↗</span></button></div>
+    </form>
+  </dialog>
+
+  <dialog class="modal history-month-modal" id="history-month-modal">
+    <div class="modal-form">
+      <div class="modal-heading"><div><p class="eyebrow">PURCHASE BREAKDOWN</p><h2 id="history-month-title">Month</h2></div><button class="icon-button modal-close" type="button" data-close-modal aria-label="Close">×</button></div>
+      <div id="history-month-purchases" class="history-month-purchases"></div>
+      <div class="empty-inline" id="history-month-purchase-empty" hidden>No itemized purchases recorded for this month.</div>
+      <div id="history-month-manual"></div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

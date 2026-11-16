@@ -1,0 +1,6 @@
+Flask>=3.1,<4
+waitress>=3.0,<4
+certifi>=2025.1
+duckdb>=1.2,<2
+pytz>=2025.1
+rapidfuzz>=3.12,<4

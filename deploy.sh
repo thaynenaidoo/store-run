@@ -30,15 +30,17 @@ if [[ -z "$APP_DIR" ]]; then
 fi
 
 if [[ -z "$DATA_DIR" && -f "$ENV_FILE" ]]; then
-  configured_data_dir="$(sed -n 's/^DATA_DIR=//p' "$ENV_FILE" | tail -n 1)"
+  configured_data_dir="$(sed -n 's/^DATA_DIR=//p' "$ENV_FILE" | tail -n 1 | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   if [[ -n "$configured_data_dir" ]]; then
     DATA_DIR="$configured_data_dir"
   fi
 fi
 DATA_DIR="${DATA_DIR:-/var/lib/store-run}"
+DATA_DIR="$(printf '%s' "$DATA_DIR" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 
-[[ "$APP_DIR" != *[[:space:]]* ]] || fail "STORE_RUN_APP_DIR cannot contain whitespace."
-[[ "$DATA_DIR" != *[[:space:]]* ]] || fail "STORE_RUN_DATA_DIR cannot contain whitespace."
+[[ "$APP_DIR" != *[[:space:]]* ]] || fail "STORE_RUN_APP_DIR contains whitespace: $(printf '%q' "$APP_DIR"). Choose a path without spaces."
+[[ "$DATA_DIR" != *[[:space:]]* ]] || fail "resolved STORE_RUN_DATA_DIR contains whitespace: $(printf '%q' "$DATA_DIR"). Remove spaces from DATA_DIR in ${ENV_FILE} or set STORE_RUN_DATA_DIR to a path without spaces."
+printf 'Using app directory: %s\nUsing data directory: %s\n' "$APP_DIR" "$DATA_DIR"
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-venv ca-certificates

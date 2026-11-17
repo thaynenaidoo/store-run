@@ -52,6 +52,7 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=secret_key,
         DATABASE=str(DB_PATH),
+        IMPORT_SAMPLE_CSVS=os.environ.get("IMPORT_SAMPLE_CSVS", "0") == "1",
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
@@ -113,23 +114,25 @@ def create_app(test_config=None):
                 "food": 0.0,
                 "household": 0.0,
                 "count": 0,
+                "unknown_amount_count": 0,
             }
             months.append(row)
             month_lookup[row["month"]] = row
 
         purchases = [dict(row) for row in db.execute(
-            """SELECT id, item_name, store, category, quantity, unit_price, total, purchase_date
+                """SELECT id, item_name, store, category, quantity, unit_price, total, purchase_date
                FROM purchases WHERE purchase_date >= ? AND purchase_date < date(?, '+1 month')
                ORDER BY purchase_date, id""",
             (start_date.isoformat(), end_date.isoformat()),
         )]
         manual_spend = [dict(row) for row in db.execute(
-            """SELECT id, month, category, amount, note, created_at
+            """SELECT id, month, category, amount, store, detail, note, created_at
                FROM manual_spend WHERE month >= ? AND month <= ?
                ORDER BY month DESC, id DESC""",
             (start_date.strftime("%Y-%m"), end_date.strftime("%Y-%m")),
         )]
         store_totals = {}
+        store_unknown_counts = {}
         category_totals = {"Food": 0.0, "Household": 0.0}
         for purchase in purchases:
             month = month_lookup.get(purchase["purchase_date"][:7])
@@ -148,13 +151,17 @@ def create_app(test_config=None):
             month = month_lookup.get(entry["month"])
             if not month:
                 continue
-            amount = float(entry["amount"] or 0)
             category = history_category(entry["category"])
-            month["total"] += amount
-            month[category.lower()] += amount
-            category_totals[category] += amount
-            no_store_label = "Manual spend · store not recorded"
-            store_totals[no_store_label] = store_totals.get(no_store_label, 0.0) + amount
+            store_name = entry["store"] or "Manual spend · store not recorded"
+            if entry["amount"] is None:
+                month["unknown_amount_count"] += 1
+                store_unknown_counts[store_name] = store_unknown_counts.get(store_name, 0) + 1
+            else:
+                amount = float(entry["amount"])
+                month["total"] += amount
+                month[category.lower()] += amount
+                category_totals[category] += amount
+                store_totals[store_name] = store_totals.get(store_name, 0.0) + amount
 
         for month in months:
             for key in ("total", "food", "household"):
@@ -188,8 +195,12 @@ def create_app(test_config=None):
             ],
             "stores": [
                 {"store": name, "total": round(amount, 2),
-                 "share": round(amount / total_spend * 100) if total_spend else 0}
-                for name, amount in sorted(store_totals.items(), key=lambda entry: entry[1], reverse=True)
+                 "share": round(amount / total_spend * 100) if total_spend else 0,
+                 "unknown_amount_count": store_unknown_counts.get(name, 0)}
+                for name, amount in sorted(
+                    {**{name: 0.0 for name in store_unknown_counts}, **store_totals}.items(),
+                    key=lambda entry: entry[1], reverse=True,
+                )
             ],
             "highlights": {
                 "total_spend": total_spend,
@@ -223,14 +234,17 @@ def create_app(test_config=None):
         category = clean_text(data.get("category"), 20).title()
         if category not in {"Food", "Household"}:
             return error_response("Choose Food or Household.", 400)
-        amount = nonnegative_number(data.get("amount"), "amount")
-        if amount <= 0:
-            return error_response("Amount must be greater than zero.", 400)
+        raw_amount = data.get("amount")
+        amount = None
+        if raw_amount not in (None, ""):
+            amount = positive_number(raw_amount, "amount")
+        store = clean_text(data.get("store"), 100) or "Manual spend · store not recorded"
+        detail = clean_text(data.get("detail"), 100)
         note = clean_text(data.get("note"), 160)
         db = get_db()
         cursor = db.execute(
-            "INSERT INTO manual_spend (month, category, amount, note, created_at) VALUES (?, ?, ?, ?, ?)",
-            (month, category, round(amount, 2), note, now()),
+            "INSERT INTO manual_spend (month, category, amount, store, detail, note, household_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (month, category, round(amount, 2) if amount is not None else None, store, detail, note, current_user()["household_id"], now()),
         )
         db.commit()
         return jsonify({"ok": True, "id": cursor.lastrowid}), 201
@@ -251,6 +265,18 @@ def create_app(test_config=None):
         count = get_db().execute("SELECT COUNT(*) FROM users").fetchone()[0]
         return jsonify({"user": user, "needs_setup": count == 0, "csrf_token": session["csrf_token"]})
 
+    @app.put("/api/household")
+    @login_required
+    def update_household():
+        user = current_user()
+        if user["role"] != "admin":
+            return error("Only the household owner can rename the household.", 403)
+        name = required_text(json_body(), "name", 100)
+        db = get_db()
+        db.execute("UPDATE households SET name = ? WHERE id = ?", (name, user["household_id"]))
+        db.commit()
+        return jsonify({"ok": True, "name": name})
+
     @app.post("/api/setup")
     def setup():
         data = json_body()
@@ -260,9 +286,10 @@ def create_app(test_config=None):
         db = get_db()
         if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             return error("The household account is already set up.", 409)
+        household = db.execute("SELECT id FROM households ORDER BY id LIMIT 1").fetchone()
         cursor = db.execute(
-            "INSERT INTO users (name, username, password_hash, role, created_at) VALUES (?, ?, ?, 'admin', ?)",
-            (name, username, hash_password(password), now()),
+            "INSERT INTO users (name, username, password_hash, role, household_id, created_at) VALUES (?, ?, ?, 'admin', ?, ?)",
+            (name, username, hash_password(password), household["id"], now()),
         )
         db.commit()
         start_session(cursor.lastrowid)
@@ -343,6 +370,7 @@ def create_app(test_config=None):
         ).fetchall()
         return jsonify({
             "user": current_user(),
+            "household": dict(db.execute("SELECT id, name FROM households WHERE id = ?", (current_user()["household_id"],)).fetchone()),
             "items": items,
             "shopping": shopping,
             "recent": recent,
@@ -380,10 +408,10 @@ def create_app(test_config=None):
         cursor = db.execute(
             """INSERT INTO items
                     (name, category, store, store_code, forecast_qty, unit_price, product_url,
-                     grocer_product_id, grocer_product_url, active, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                     grocer_product_id, grocer_product_url, active, household_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
                 (name, category, store, store_code, quantity, price, product_url,
-                 grocer_product_id, grocer_product_url, now(), now()),
+                 grocer_product_id, grocer_product_url, current_user()["household_id"], now(), now()),
         )
         db.commit()
         return jsonify({"id": cursor.lastrowid}), 201
@@ -685,10 +713,10 @@ def create_app(test_config=None):
         if not item:
             return error("Choose an active catalog item.", 400)
         db.execute(
-            """INSERT INTO shopping_list (item_id, quantity, note, created_at)
-               VALUES (?, ?, ?, ?) ON CONFLICT(item_id) DO UPDATE SET
+                """INSERT INTO shopping_list (item_id, quantity, note, household_id, created_at)
+                    VALUES (?, ?, ?, ?, ?) ON CONFLICT(item_id) DO UPDATE SET
                quantity=excluded.quantity, note=excluded.note, created_at=excluded.created_at""",
-            (item_id, quantity, note, now()),
+                (item_id, quantity, note, current_user()["household_id"], now()),
         )
         db.commit()
         return jsonify({"ok": True})
@@ -715,10 +743,10 @@ def create_app(test_config=None):
             return error("No items with a positive usual quantity were found for that store.", 404)
         timestamp = now()
         db.executemany(
-            """INSERT INTO shopping_list (item_id, quantity, note, created_at)
-               VALUES (?, ?, '', ?) ON CONFLICT(item_id) DO UPDATE SET
+                """INSERT INTO shopping_list (item_id, quantity, note, household_id, created_at)
+                    VALUES (?, ?, '', ?, ?) ON CONFLICT(item_id) DO UPDATE SET
                quantity=excluded.quantity, note='', created_at=excluded.created_at""",
-            [(item["id"], item["forecast_qty"], timestamp) for item in items],
+                [(item["id"], item["forecast_qty"], current_user()["household_id"], timestamp) for item in items],
         )
         db.commit()
         return jsonify({"ok": True, "added": len(items)})
@@ -742,9 +770,9 @@ def create_app(test_config=None):
         total = round(quantity * price, 2)
         cursor = db.execute(
             """INSERT INTO purchases
-                    (item_id, item_name, store, category, quantity, unit_price, total, purchase_date, source, source_period, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', '', ?)""",
-                (item_id, item["name"], item["store"], item["category"], quantity, price, total, purchased_on, now()),
+                    (item_id, item_name, store, category, quantity, unit_price, total, purchase_date, source, source_period, household_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', '', ?, ?)""",
+                (item_id, item["name"], item["store"], item["category"], quantity, price, total, purchased_on, current_user()["household_id"], now()),
         )
         db.execute("UPDATE items SET unit_price = ?, updated_at = ? WHERE id = ?", (price, now(), item_id))
         db.execute("DELETE FROM shopping_list WHERE item_id = ?", (item_id,))
@@ -814,8 +842,8 @@ def create_app(test_config=None):
         password = valid_password(data.get("password"))
         try:
             get_db().execute(
-                "INSERT INTO users (name, username, password_hash, role, created_at) VALUES (?, ?, ?, 'member', ?)",
-                (name, username, hash_password(password), now()),
+                "INSERT INTO users (name, username, password_hash, role, household_id, created_at) VALUES (?, ?, ?, 'member', ?, ?)",
+                (name, username, hash_password(password), current_user()["household_id"], now()),
             )
             get_db().commit()
         except sqlite3.IntegrityError:
@@ -830,9 +858,13 @@ def initialize_database(app):
     with app.app_context():
         db = get_db()
         db.executescript(
-            """CREATE TABLE IF NOT EXISTS users (
+            """CREATE TABLE IF NOT EXISTS households (
+                   id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL
+               );
+               CREATE TABLE IF NOT EXISTS users (
                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL UNIQUE,
-                   password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', created_at TEXT NOT NULL
+                   password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member',
+                   household_id INTEGER REFERENCES households(id), created_at TEXT NOT NULL
                );
                CREATE TABLE IF NOT EXISTS items (
                    id INTEGER PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Other',
@@ -841,18 +873,20 @@ def initialize_database(app):
                    product_url TEXT NOT NULL DEFAULT '', grocer_product_id INTEGER,
                    grocer_product_url TEXT NOT NULL DEFAULT '', price_refreshed_at TEXT,
                    price_refreshed_store_id INTEGER, price_refreshed_store_name TEXT,
-                   active INTEGER NOT NULL DEFAULT 1,
+                   active INTEGER NOT NULL DEFAULT 1, household_id INTEGER REFERENCES households(id),
                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                );
                CREATE TABLE IF NOT EXISTS shopping_list (
                    id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
-                   quantity REAL NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+                   quantity REAL NOT NULL, note TEXT NOT NULL DEFAULT '',
+                   household_id INTEGER REFERENCES households(id), created_at TEXT NOT NULL
                );
                CREATE TABLE IF NOT EXISTS purchases (
                    id INTEGER PRIMARY KEY, item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
                    item_name TEXT NOT NULL, store TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'Other', quantity REAL NOT NULL,
                    unit_price REAL NOT NULL, total REAL NOT NULL, purchase_date TEXT,
-                   source TEXT NOT NULL DEFAULT 'manual', source_period TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+                   source TEXT NOT NULL DEFAULT 'manual', source_period TEXT NOT NULL DEFAULT '',
+                   household_id INTEGER REFERENCES households(id), created_at TEXT NOT NULL
                );
                CREATE TABLE IF NOT EXISTS settings (
                    key TEXT PRIMARY KEY, value TEXT NOT NULL
@@ -863,11 +897,53 @@ def initialize_database(app):
                );
                CREATE TABLE IF NOT EXISTS manual_spend (
                    id INTEGER PRIMARY KEY, month TEXT NOT NULL, category TEXT NOT NULL,
-                   amount REAL NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+                   amount REAL, store TEXT NOT NULL DEFAULT 'Manual spend · store not recorded',
+                   detail TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+                   household_id INTEGER REFERENCES households(id), created_at TEXT NOT NULL
                );
                CREATE INDEX IF NOT EXISTS purchases_date_idx ON purchases(purchase_date);
                CREATE INDEX IF NOT EXISTS purchases_item_idx ON purchases(item_id);"""
         )
+        db.execute(
+            "INSERT OR IGNORE INTO households (id, name, created_at) VALUES (1, 'Our Household', ?)",
+            (now(),),
+        )
+        household_columns = {
+            "users": ("household_id", "INTEGER REFERENCES households(id)"),
+            "items": ("household_id", "INTEGER REFERENCES households(id)"),
+            "shopping_list": ("household_id", "INTEGER REFERENCES households(id)"),
+            "purchases": ("household_id", "INTEGER REFERENCES households(id)"),
+        }
+        for table, (column, definition) in household_columns.items():
+            columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+            if column not in columns:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            db.execute(f"UPDATE {table} SET {column} = 1 WHERE {column} IS NULL")
+        manual_columns = db.execute("PRAGMA table_info(manual_spend)").fetchall()
+        manual_column_names = {row[1] for row in manual_columns}
+        amount_is_required = next(row[3] for row in manual_columns if row[1] == "amount")
+        if amount_is_required or not {"store", "detail", "household_id"}.issubset(manual_column_names):
+            db.execute("ALTER TABLE manual_spend RENAME TO manual_spend_legacy")
+            db.execute(
+                """CREATE TABLE manual_spend (
+                       id INTEGER PRIMARY KEY, month TEXT NOT NULL, category TEXT NOT NULL,
+                       amount REAL, store TEXT NOT NULL DEFAULT 'Manual spend · store not recorded',
+                       detail TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+                       household_id INTEGER REFERENCES households(id), created_at TEXT NOT NULL
+                   )"""
+            )
+            legacy_columns = {row[1] for row in db.execute("PRAGMA table_info(manual_spend_legacy)").fetchall()}
+            store_value = "store" if "store" in legacy_columns else "'Manual spend · store not recorded'"
+            detail_value = "detail" if "detail" in legacy_columns else "''"
+            household_value = "COALESCE(household_id, 1)" if "household_id" in legacy_columns else "1"
+            db.execute(
+                f"""INSERT INTO manual_spend (id, month, category, amount, store, detail, note, household_id, created_at)
+                    SELECT id, month, category, amount, {store_value}, {detail_value}, note, {household_value}, created_at
+                    FROM manual_spend_legacy"""
+            )
+            db.execute("DROP TABLE manual_spend_legacy")
+        else:
+            db.execute("UPDATE manual_spend SET household_id = 1 WHERE household_id IS NULL")
         item_columns = {row[1] for row in db.execute("PRAGMA table_info(items)").fetchall()}
         purchase_columns = {row[1] for row in db.execute("PRAGMA table_info(purchases)").fetchall()}
         if "category" not in purchase_columns:
@@ -908,7 +984,7 @@ def initialize_database(app):
             )
         db.commit()
         imported = db.execute("SELECT COUNT(*) FROM items").fetchone()[0]
-        if imported == 0:
+        if imported == 0 and app.config.get("IMPORT_SAMPLE_CSVS", False):
             for filename in ("food.csv", "household.csv"):
                 path = BASE_DIR / filename
                 if path.exists():
@@ -967,9 +1043,9 @@ def import_legacy_file(db, path):
         else:
             cursor = db.execute(
                 """INSERT INTO items
-                   (name, category, store, store_code, forecast_qty, unit_price, active, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
-                (name, category, store, code, forecast_qty, unit_price, now(), now()),
+                         (name, category, store, store_code, forecast_qty, unit_price, active, household_id, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)""",
+                     (name, category, store, code, forecast_qty, unit_price, now(), now()),
             )
             item_id = cursor.lastrowid
             imported += 1
@@ -985,8 +1061,8 @@ def import_legacy_file(db, path):
                 continue
             db.execute(
                 """INSERT INTO purchases
-                         (item_id, item_name, store, category, quantity, unit_price, total, purchase_date, source, source_period, created_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'legacy', ?, ?)""",
+                         (item_id, item_name, store, category, quantity, unit_price, total, purchase_date, source, source_period, household_id, created_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'legacy', ?, 1, ?)""",
                      (item_id, name, store, category, quantity, round(total / quantity, 4), total,
                  f"{month} · {path.stem}", now()),
             )
@@ -1032,7 +1108,7 @@ def current_user():
     user_id = session.get("user_id")
     if not user_id:
         return None
-    row = get_db().execute("SELECT id, name, username, role FROM users WHERE id = ?", (user_id,)).fetchone()
+    row = get_db().execute("SELECT id, name, username, role, household_id FROM users WHERE id = ?", (user_id,)).fetchone()
     return dict(row) if row else None
 
 

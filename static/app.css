@@ -140,6 +140,10 @@ button.metric:focus-visible { z-index: 1; outline: 3px solid var(--ink); outline
 .empty-inline { padding: 16px 7px; color: #858e85; font-size: 10px; }
 
 .list-toolbar { display: flex; align-items: end; gap: 10px; margin-bottom: 20px; padding: 14px; border: 1px solid #dfded4; background: #fffefa; }
+.list-search-toolbar { display: flex; align-items: center; gap: 12px; margin: -8px 0 14px; }
+.list-search-toolbar .search-field { flex: 1; width: auto; }
+.fixed-list-search-toolbar { margin: 12px 0 8px; }
+.list-search-empty { margin: -6px 0 14px; padding: 14px; border: 1px dashed #cfd4ca; background: #fffefa; }
 .select-wrap { display: grid; min-width: 180px; flex: 1; gap: 6px; color: #78837a; font-size: 8px; font-weight: 700; letter-spacing: .9px; }
 .select-wrap select, input, select { min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #d7d9d0; border-radius: 0; background: #fffefa; color: var(--ink); font-size: 12px; }
 .toolbar-total { display: grid; gap: 3px; margin-left: auto; padding-left: 18px; border-left: 1px solid #e5e3d9; }
@@ -263,6 +267,13 @@ button.metric:focus-visible { z-index: 1; outline: 3px solid var(--ink); outline
 .history-purchase-actions .button { min-height: 34px; padding: 0 9px; font-size: 9px; }
 .history-manual-summary { display: grid; gap: 6px; margin-top: 12px; padding: 12px; border-left: 3px solid var(--coral); background: #f5f2e9; color: #667169; font-size: 10px; }
 .history-manual-summary strong { color: var(--ink); }
+.history-manual-entry { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding-top: 7px; border-top: 1px solid #e3e1d7; }
+.history-manual-entry > span { display: grid; gap: 3px; }
+.history-manual-entry > strong { flex: 0 0 auto; color: var(--ink); text-align: right; }
+.history-manual-entry small, .unknown-amount-note { display: block; color: #6b766e; font-size: 9px; font-weight: 400; }
+.amount-unknown { color: #6b766e; font-size: 9px; font-style: italic; white-space: nowrap; }
+.household-button { max-width: 190px; overflow: hidden; }
+.household-button span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .manual-spend-surface { margin-bottom: 14px; }
 .history-transactions-surface .purchase-table td:nth-child(2) { color: #78827a; }
 .highlight-list { display: grid; }
@@ -380,6 +391,9 @@ button.metric:focus-visible { z-index: 1; outline: 3px solid var(--ink); outline
   .list-toolbar { flex-wrap: wrap; gap: 8px; padding: 10px; }
   .select-wrap { min-width: calc(100% - 5px); }
   .list-toolbar > .button { min-height: 38px; }
+  .list-search-toolbar { align-items: stretch; flex-wrap: wrap; gap: 6px; }
+  .list-search-toolbar .search-field { min-width: 100%; }
+  .list-search-toolbar .section-caption { padding-left: 2px; }
   .toolbar-total { margin-left: auto; padding-left: 10px; }
   .store-group-heading { min-height: 44px; padding: 0 11px; }
   .store-group-heading h2 { font-size: 20px; }

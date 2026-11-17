@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import unittest
 from datetime import date
 from pathlib import Path
@@ -22,6 +23,7 @@ class HouseholdAppTests(unittest.TestCase):
             "TESTING": True,
             "DATABASE": str(Path(self.temp_dir.name) / "test.db"),
             "SECRET_KEY": "test-secret-key",
+            "IMPORT_SAMPLE_CSVS": True,
         })
         self.client = self.app.test_client()
 
@@ -252,6 +254,74 @@ class HouseholdAppTests(unittest.TestCase):
         ):
             response = self.client.post("/api/manual-spend", headers=headers, json=data)
             self.assertEqual(response.status_code, 400)
+
+    def test_manual_store_run_can_be_added_to_a_past_month_with_unknown_amount(self):
+        token = self.setup_owner()
+        response = self.client.post("/api/manual-spend", headers={"X-CSRF-Token": token}, json={
+            "month": "2026-08",
+            "category": "Food",
+            "store": "Local Butcher",
+            "detail": "Meat",
+            "note": "Monthly shop",
+            "amount": None,
+        })
+        self.assertEqual(response.status_code, 201)
+        history = self.client.get("/api/history").get_json()
+        august = next(month for month in history["months"] if month["month"] == "2026-08")
+        self.assertEqual(august["total"], 0)
+        self.assertEqual(august["unknown_amount_count"], 1)
+        entry = history["manual_spend"][0]
+        self.assertEqual(entry["store"], "Local Butcher")
+        self.assertEqual(entry["detail"], "Meat")
+        self.assertIsNone(entry["amount"])
+        self.assertTrue(any(row["store"] == "Local Butcher" and row["unknown_amount_count"] == 1 for row in history["stores"]))
+
+    def test_household_name_is_persisted_and_exposed_in_state(self):
+        token = self.setup_owner()
+        state = self.client.get("/api/state").get_json()
+        self.assertEqual(state["household"]["name"], "Our Household")
+        updated = self.client.put("/api/household", headers={"X-CSRF-Token": token}, json={"name": "The Test Home"})
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(self.client.get("/api/state").get_json()["household"]["name"], "The Test Home")
+
+    def test_sample_csv_import_is_disabled_by_default(self):
+        app = create_app({
+            "TESTING": True,
+            "DATABASE": str(Path(self.temp_dir.name) / "no-samples.db"),
+            "SECRET_KEY": "test-secret-key",
+            "IMPORT_SAMPLE_CSVS": False,
+        })
+        client = app.test_client()
+        client.post("/api/setup", json={"name": "Owner", "username": "owner", "password": "long-test-password"})
+        self.assertEqual(client.get("/api/session").get_json()["needs_setup"], False)
+        self.assertEqual(client.get("/api/state").get_json()["stats"]["item_count"], 0)
+
+    def test_existing_manual_spend_rows_migrate_without_losing_data(self):
+        database_path = Path(self.temp_dir.name) / "legacy-manual-spend.db"
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """CREATE TABLE manual_spend (
+                       id INTEGER PRIMARY KEY, month TEXT NOT NULL, category TEXT NOT NULL,
+                       amount REAL NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+                   )"""
+            )
+            connection.execute(
+                "INSERT INTO manual_spend (month, category, amount, note, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("2026-08", "Food", 42.5, "Legacy entry", "2026-11-17T00:00:00+00:00"),
+            )
+        app = create_app({
+            "TESTING": True,
+            "DATABASE": str(database_path),
+            "SECRET_KEY": "test-secret-key",
+            "IMPORT_SAMPLE_CSVS": False,
+        })
+        with app.app_context():
+            from app import get_db
+            row = get_db().execute("SELECT * FROM manual_spend").fetchone()
+            self.assertEqual(row["amount"], 42.5)
+            self.assertEqual(row["note"], "Legacy entry")
+            self.assertEqual(row["store"], "Manual spend · store not recorded")
+            self.assertEqual(row["household_id"], 1)
 
     def test_existing_fractional_quantities_are_normalized_on_startup(self):
         self.setup_owner()

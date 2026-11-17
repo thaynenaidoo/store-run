@@ -1,6 +1,6 @@
 # Store Run
 
-A small, self-hosted household shopping app. The original `food.csv` and `household.csv` files stay in place and are imported the first time the app starts with an empty database. The importer detects tab-separated data, creates catalog entries from forecast quantities/prices, and keeps dated purchases separate from legacy month-only history. It does not invent a year for the old month columns.
+A small, self-hosted household shopping app. The original `food.csv` and `household.csv` files are optional sample/legacy migration inputs, not runtime dependencies. The optional importer detects tab-separated data, creates catalog entries from forecast quantities/prices, and keeps dated purchases separate from legacy month-only history. It does not invent a year for the old month columns.
 
 ## Run locally
 
@@ -8,47 +8,36 @@ Requires Python 3.10 or newer.
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python app.py
 ```
 
-Open <http://localhost:8000>. The first screen creates the household owner account; passwords must be at least 10 characters. From the owner account, use **Members** to create separate logins for other people. Everyone sees the same catalog, shopping list, and purchase history.
+Open <http://localhost:8000>. The first screen creates the household owner account; passwords must be at least 10 characters. From the owner account, use **Members** to create separate logins for other people. Everyone sees the same catalog, shopping list, and purchase history. Python virtual environments are machine- and path-specific; create a new `.venv` after cloning or moving the project rather than committing or copying one.
 
-The app stores its SQLite database and signing key in `instance/` by default. Keep that folder private and backed up. Set `DATA_DIR` to move it elsewhere.
+The app stores its SQLite database and signing key in `instance/` by default. Keep that folder private and backed up. Set `DATA_DIR` to move it elsewhere. The CSVs in this repository are sample/legacy migration data only; a fresh install does not need them and does not import them by default. To opt in to a first-run sample import, set `IMPORT_SAMPLE_CSVS=1` before startup. Once data is in SQLite, the CSVs are no longer used.
 
 ## Proxmox LXC
 
-A small Debian or Ubuntu LXC on your LAN is enough; Docker is not required. The service listens on port `8000`. Copy this folder, including both CSVs, to `/opt/store-run` in the container before the first start.
-
-Inside the LXC, install Python and create the service account and persistent data directory:
+A small Debian or Ubuntu LXC on your LAN is enough; Docker is not required. Clone the repository into `/opt/store-run`, then run the bootstrap script as root:
 
 ```sh
-apt update
-apt install -y python3 python3-venv
-useradd --system --home /var/lib/store-run --shell /usr/sbin/nologin store-run
-install -d -o store-run -g store-run /var/lib/store-run
+sudo git clone https://github.com/thaynenaidoo/store-run.git /opt/store-run
 cd /opt/store-run
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+sudo ./deploy.sh
 ```
 
-Create `/etc/store-run.env`:
+`deploy.sh` installs Git, Python, and venv support; creates the `store-run` service account and persistent data directory; builds a fresh virtual environment; installs requirements; creates `/etc/store-run.env` if it does not exist; installs/enables the systemd service; and checks `/healthz`. It does not overwrite an existing environment file or database. By default app code is in `/opt/store-run` and SQLite data/signing key are in `/var/lib/store-run`.
+
+For a deployment to a custom path, set `STORE_RUN_APP_DIR` and/or `STORE_RUN_DATA_DIR` when running the script. Existing deployments can update with `sudo git -C /opt/store-run pull --ff-only && sudo /opt/store-run/deploy.sh`; the script keeps the existing data directory and environment file.
+
+The default `/etc/store-run.env` contains:
 
 ```sh
 DATA_DIR=/var/lib/store-run
 COOKIE_SECURE=0
 ```
 
-Install the service file and start it:
-
-```sh
-cp /opt/store-run/deploy/store-run.service.example /etc/systemd/system/store-run.service
-systemctl daemon-reload
-systemctl enable --now store-run
-systemctl status store-run
-```
-
-Open `http://<LXC-IP>:8000` from devices on your home network. On first startup, the CSVs are imported into `/var/lib/store-run/household.db`; after that, the database is the live source of truth. Back up both `household.db` and `secret_key` from the data directory. Stop the service before copying those files for a simple consistent backup.
+Open `http://<LXC-IP>:8000` from devices on your home network. The database is the live source of truth; CSV samples are not required. Back up both `household.db` and `secret_key` from the data directory. Stop the service before copying those files for a simple consistent backup.
 
 For an existing Night Run deployment, stop its service and migrate the persistent data before starting Store Run, so the household database and signing key are preserved:
 
@@ -78,6 +67,8 @@ For remote access, prefer a VPN such as Tailscale. Do not forward port `8000` di
 - Mark a list item bought to add a dated purchase at its saved price. Edit the catalog price when prices change, or change the price before marking an item bought.
 - The overview shows the current list estimate, this month's dated spend, a six-month chart, and recent purchases. Imported legacy purchases remain labeled by month and source without a guessed year.
 - **History** reports dated spending over the last 12 calendar months, monthly totals, food/beverage versus household spend, spend by store, and highlights such as the largest month, top store, largest purchase, repeat item, and active shopping months. Open any month to review its purchases, correct a purchase's unit price, or remove a purchase. Manual monthly spend remains labeled as not itemized. Imported CSV purchases without a year remain separately labeled and are not assigned to a month in this report.
+- **Add a store run** records offline or retroactive purchases for any month, grouped by Food or Household, store, and optional type (for example Food → Local Butcher → Meat). Amounts may be left blank; unknown amounts appear in the breakdown and do not inflate calculated totals. This supports local stores without product pages as well as catch-up entries such as an August run.
+- Use the household-name control in the header to name the current household. The database now has a household record and household IDs on core records as multi-household groundwork; account creation and data isolation between multiple households are not enabled yet.
 - Use **Export** for a CSV copy of purchase history.
 
 Retailer checkout is intentionally left to each retailer's own site. Product links are shortcuts, not automated orders.

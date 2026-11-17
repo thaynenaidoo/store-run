@@ -58,6 +58,7 @@ function showApp(user) {
   $('#user-name').textContent = user.name;
   $('#user-dot').textContent = (user.name.trim()[0] || 'N').toUpperCase();
   $('#member-button').hidden = user.role !== 'admin';
+  $('#household-button').hidden = user.role !== 'admin';
   $('#today-label').textContent = new Intl.DateTimeFormat('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date()).toUpperCase();
 }
 
@@ -68,6 +69,7 @@ async function refreshState() {
 
 function renderAll() {
   if (!appState) return;
+  $('#household-name').textContent = appState.household?.name || 'Our Household';
   renderOverview();
   renderStoreLists();
   renderPricingSettings();
@@ -195,8 +197,10 @@ function grocerLinkMarkup(item) {
 
 function renderShopping() {
   const { shopping, items } = appState;
+  const query = ($('#shopping-search')?.value || '').trim().toLowerCase();
+  const matches = shopping.filter(item => `${item.name} ${item.store} ${item.category} ${item.note || ''}`.toLowerCase().includes(query));
   const grouped = new Map();
-  for (const item of shopping) {
+  for (const item of matches) {
     const store = item.store || 'Unassigned';
     if (!grouped.has(store)) grouped.set(store, []);
     grouped.get(store).push(item);
@@ -219,7 +223,9 @@ function renderShopping() {
     return `<section class="store-group"><div class="store-group-heading"><h2>${escapeHtml(store)}</h2><span>${list.length} ${list.length === 1 ? 'ITEM' : 'ITEMS'}</span></div>${sections}<div class="store-total">STORE ESTIMATE <strong>${money(total)}</strong></div></section>`;
   }).join('');
   $('#shopping-empty').hidden = shopping.length > 0;
-  $('#full-shopping').hidden = shopping.length === 0;
+  $('#full-shopping').hidden = matches.length === 0;
+  $('#shopping-search-empty').hidden = shopping.length === 0 || matches.length > 0;
+  $('#shopping-search-count').textContent = query ? `${matches.length} of ${shopping.length} items` : `${shopping.length} ${shopping.length === 1 ? 'ITEM' : 'ITEMS'}`;
   $('#shopping-total').textContent = money(shopping.reduce((sum, item) => sum + item.unit_price * item.quantity, 0));
   const select = $('#add-item-select');
   const previous = select.value;
@@ -270,6 +276,8 @@ function renderStoreLists() {
   else if (stores.includes("Pak 'n Save")) select.value = "Pak 'n Save";
   const store = select.value;
   const items = grouped.get(store) || [];
+  const query = ($('#fixed-list-search')?.value || '').trim().toLowerCase();
+  const visibleItems = items.filter(item => `${item.name} ${item.category} ${item.store}`.toLowerCase().includes(query));
   $('#paknsave-handoff-button').hidden = store !== "Pak 'n Save";
   const totalQuantity = items.reduce((sum, item) => sum + Number(item.forecast_qty || 0), 0);
   const total = items.reduce((sum, item) => sum + Number(item.forecast_qty || 0) * Number(item.unit_price || 0), 0);
@@ -277,14 +285,16 @@ function renderStoreLists() {
   $('#fixed-quantity-count').textContent = Number.isInteger(totalQuantity) ? totalQuantity : totalQuantity.toFixed(1);
   $('#fixed-store-total').textContent = money(total);
   $('#fixed-list-empty').hidden = appState.items.length > 0;
-  $('#fixed-list-table').hidden = items.length === 0;
+  $('#fixed-list-table').hidden = items.length === 0 || visibleItems.length === 0;
+  $('#fixed-list-search-empty').hidden = items.length === 0 || visibleItems.length > 0;
+  $('#fixed-list-search-count').textContent = query ? `${visibleItems.length} of ${items.length} items` : `${items.length} ${items.length === 1 ? 'ITEM' : 'ITEMS'}`;
   $('#use-store-list-button').disabled = items.length === 0 || !items.some(item => Number(item.forecast_qty) > 0);
   const categories = new Map([
     ['Beverages', []],
     ['Food', []],
     ['Household', []],
   ]);
-  for (const item of items) categories.get(storeListCategory(item.category)).push(item);
+  for (const item of visibleItems) categories.get(storeListCategory(item.category)).push(item);
   $('#fixed-list-table').innerHTML = [...categories.entries()].filter(([, groupItems]) => groupItems.length > 0).map(([category, groupItems]) => {
     const categoryTotal = groupItems.reduce((sum, item) => sum + Number(item.forecast_qty || 0) * Number(item.unit_price || 0), 0);
     const rows = groupItems.map(item => {
@@ -511,11 +521,11 @@ function renderHistory() {
     : '<div class="empty-inline">No dated spending yet.</div>';
   const storeMax = Math.max(...stores.map(row => row.total), 1);
   $('#history-stores').innerHTML = stores.length
-    ? stores.map(row => `<div class="history-bar-row"><span class="history-bar-label">${escapeHtml(row.store)}</span><div class="history-bar-track"><div class="history-bar-fill" style="width:${row.total / storeMax * 100}%"></div></div><strong class="history-bar-value">${money(row.total)} <span>${row.share}%</span></strong></div>`).join('')
+    ? stores.map(row => `<div class="history-bar-row"><span class="history-bar-label">${escapeHtml(row.store)}${row.unknown_amount_count ? `<small class="unknown-amount-note">${row.unknown_amount_count} amount${row.unknown_amount_count === 1 ? '' : 's'} unknown</small>` : ''}</span><div class="history-bar-track"><div class="history-bar-fill" style="width:${row.total / storeMax * 100}%"></div></div><strong class="history-bar-value">${money(row.total)} <span>${row.share}%</span></strong></div>`).join('')
     : '<div class="empty-inline">No dated spending yet.</div>';
   $('#history-months').innerHTML = months.slice().reverse().map(month => {
     const current = month.month === months.at(-1).month ? 'current-month' : '';
-    return `<tr class="${current}"><td><button class="history-month-trigger" data-action="view-history-month" data-month="${month.month}">${escapeHtml(month.label)}</button></td><td class="align-right">${money(month.food)}</td><td class="align-right">${money(month.household)}</td><td class="align-right"><strong>${money(month.total)}</strong></td></tr>`;
+    return `<tr class="${current}"><td><button class="history-month-trigger" data-action="view-history-month" data-month="${month.month}">${escapeHtml(month.label)}</button></td><td class="align-right">${money(month.food)}</td><td class="align-right">${money(month.household)}</td><td class="align-right"><strong>${money(month.total)}</strong>${month.unknown_amount_count ? `<div class="unknown-amount-note">${month.unknown_amount_count} unknown amount${month.unknown_amount_count === 1 ? '' : 's'}</div>` : ''}</td></tr>`;
   }).join('');
   $('#history-purchases-empty').hidden = historyState.purchases.length > 0;
   $('#history-purchases').innerHTML = historyState.purchases.slice().reverse().map(purchase => {
@@ -525,7 +535,8 @@ function renderHistory() {
   $('#manual-spend-empty').hidden = historyState.manual_spend.length > 0;
   $('#manual-spend-rows').innerHTML = historyState.manual_spend.map(entry => {
     const month = new Intl.DateTimeFormat('en-NZ', { month: 'short', year: 'numeric' }).format(new Date(`${entry.month}-01T12:00:00`));
-    return `<tr><td>${month}</td><td>${escapeHtml(entry.category)}</td><td>${escapeHtml(entry.note || '—')}</td><td class="align-right">${money(entry.amount)}</td><td class="purchase-delete-cell"><button class="small-action purchase-delete" data-action="delete-manual-spend" data-entry="${entry.id}" title="Remove manual spend" aria-label="Remove ${escapeHtml(entry.category)} spend for ${month}">×</button></td></tr>`;
+    const description = [entry.store, entry.detail, entry.note].filter(Boolean).map(escapeHtml).join(' · ');
+    return `<tr><td>${month}</td><td>${escapeHtml(entry.category)}</td><td>${description || '—'}</td><td class="align-right">${entry.amount === null ? '<span class="amount-unknown">Not recorded</span>' : money(entry.amount)}</td><td class="purchase-delete-cell"><button class="small-action purchase-delete" data-action="delete-manual-spend" data-entry="${entry.id}" title="Remove store run entry" aria-label="Remove ${escapeHtml(entry.category)} spend at ${escapeHtml(entry.store)} for ${month}">×</button></td></tr>`;
   }).join('');
   $('#history-empty').hidden = highlights.purchase_count > 0;
   $('#history-legacy-note').hidden = undated.count === 0;
@@ -546,6 +557,22 @@ function openHistoryMonth(monthKey) {
   selectedHistoryMonth = monthKey;
   const monthPurchases = historyState.purchases.filter(purchase => purchase.purchase_date?.slice(0, 7) === monthKey);
   const monthManualSpend = historyState.manual_spend.filter(entry => entry.month === monthKey);
+  const manualGroups = new Map();
+  for (const entry of monthManualSpend) {
+    const key = `${entry.category}\u0000${entry.store}\u0000${entry.detail || 'General'}`;
+    const group = manualGroups.get(key) || {
+      category: entry.category,
+      store: entry.store,
+      detail: entry.detail || 'General',
+      amount: 0,
+      unknownAmountCount: 0,
+      notes: [],
+    };
+    if (entry.amount === null) group.unknownAmountCount += 1;
+    else group.amount += Number(entry.amount);
+    if (entry.note && !group.notes.includes(entry.note)) group.notes.push(entry.note);
+    manualGroups.set(key, group);
+  }
   const monthLabel = new Intl.DateTimeFormat('en-NZ', { month: 'long', year: 'numeric' }).format(new Date(`${monthKey}-01T12:00:00`));
   $('#history-month-title').textContent = monthLabel;
   $('#history-month-purchase-empty').hidden = monthPurchases.length > 0;
@@ -554,7 +581,7 @@ function openHistoryMonth(monthKey) {
     return `<article class="history-purchase-card"><div class="history-purchase-main"><strong>${escapeHtml(purchase.item_name)}</strong><span>${escapeHtml(when)} · ${escapeHtml(purchase.store || '—')} · ${escapeHtml(purchase.category)}</span><span>Qty ${escapeHtml(purchase.quantity)} · Total <strong>${money(purchase.total)}</strong></span></div><label class="history-price-field">Unit price<input type="number" min="0" step="0.01" required value="${Number(purchase.unit_price).toFixed(2)}" data-purchase-price="${purchase.id}" aria-label="Unit price for ${escapeHtml(purchase.item_name)}"></label><div class="history-purchase-actions"><button class="button button-quiet" data-action="update-purchase-price" data-purchase="${purchase.id}">Save price</button><button class="small-action purchase-delete" data-action="delete-purchase" data-purchase="${purchase.id}" title="Remove this purchase" aria-label="Remove purchase of ${escapeHtml(purchase.item_name)}">×</button></div></article>`;
   }).join('');
   $('#history-month-manual').innerHTML = monthManualSpend.length
-    ? `<div class="history-manual-summary"><strong>Manual spend · not itemized</strong>${monthManualSpend.map(entry => `<span>${escapeHtml(entry.category)}${entry.note ? ` · ${escapeHtml(entry.note)}` : ''}: ${money(entry.amount)}</span>`).join('')}</div>`
+    ? `<div class="history-manual-summary"><strong>Store runs &amp; offline purchases</strong>${[...manualGroups.values()].map(group => `<div class="history-manual-entry"><span><b>${escapeHtml(group.category)}</b> · ${escapeHtml(group.store)} · ${escapeHtml(group.detail)}${group.notes.length ? `<small>${group.notes.map(escapeHtml).join(' · ')}</small>` : ''}</span><strong>${group.amount ? money(group.amount) : ''}${group.unknownAmountCount ? `<small>${group.unknownAmountCount} amount${group.unknownAmountCount === 1 ? '' : 's'} not recorded</small>` : ''}${!group.amount && !group.unknownAmountCount ? money(0) : ''}</strong></div>`).join('')}</div>`
     : '';
   $('#history-month-modal').showModal();
 }
@@ -705,7 +732,7 @@ async function submitManualSpend(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = Object.fromEntries(new FormData(form));
-  data.amount = Number(data.amount);
+  data.amount = data.amount.trim() ? Number(data.amount) : null;
   $('#manual-spend-message').textContent = '';
   try {
     await api('/api/manual-spend', { method: 'POST', body: data });
@@ -713,7 +740,7 @@ async function submitManualSpend(event) {
     form.reset();
     await loadHistory();
     await refreshState();
-    showToast('Manual monthly spend added.');
+    showToast('Store run added to History.');
   } catch (error) {
     $('#manual-spend-message').textContent = error.message;
   }
@@ -725,6 +752,28 @@ function openManualSpendModal() {
   form.elements.month.value = new Date().toISOString().slice(0, 7);
   $('#manual-spend-message').textContent = '';
   $('#manual-spend-modal').showModal();
+}
+
+async function submitHousehold(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  $('#household-message').textContent = '';
+  try {
+    await api('/api/household', { method: 'PUT', body: Object.fromEntries(new FormData(form)) });
+    $('#household-modal').close();
+    await refreshState();
+    showToast('Household name updated.');
+  } catch (error) {
+    $('#household-message').textContent = error.message;
+  }
+}
+
+function openHouseholdModal() {
+  const form = $('#household-form');
+  form.reset();
+  form.elements.name.value = appState?.household?.name || '';
+  $('#household-message').textContent = '';
+  $('#household-modal').showModal();
 }
 
 async function handleAction(event) {
@@ -812,7 +861,10 @@ $('#auth-form').addEventListener('submit', submitAuth);
 $('#item-form').addEventListener('submit', submitItem);
 $('#member-form').addEventListener('submit', submitMember);
 $('#manual-spend-form').addEventListener('submit', submitManualSpend);
+$('#household-form').addEventListener('submit', submitHousehold);
 $('#catalog-search').addEventListener('input', renderCatalog);
+$('#shopping-search').addEventListener('input', renderShopping);
+$('#fixed-list-search').addEventListener('input', renderStoreLists);
 $('#fixed-store-select').addEventListener('change', () => {
   renderStoreLists();
   renderPricingSettings();
@@ -834,6 +886,7 @@ $('#paknsave-handoff-button').addEventListener('click', event => { handoffPaknSa
 $('#export-button').addEventListener('click', () => { window.location.href = '/api/export.csv'; });
 $('#history-refresh-button').addEventListener('click', loadHistory);
 $('#add-manual-spend-button').addEventListener('click', openManualSpendModal);
+$('#household-button').addEventListener('click', openHouseholdModal);
 $('#member-button').addEventListener('click', () => {
   $('#member-message').textContent = '';
   $('#member-form').reset();

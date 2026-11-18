@@ -81,6 +81,62 @@ class HouseholdAppTests(unittest.TestCase):
         self.assertEqual(recent_purchase["total"], 14.25)
         self.assertEqual(state["stats"]["month_spend"], 14.25)
 
+    def test_clear_shopping_preserves_catalog_and_history(self):
+        token = self.setup_owner()
+        headers = {"X-CSRF-Token": token}
+        before = self.client.get('/api/state').get_json()
+        item = before['items'][0]
+        self.client.post('/api/shopping', headers=headers, json={'item_id': item['id'], 'quantity': 1})
+        self.assertEqual(self.client.delete('/api/shopping').status_code, 403)
+        response = self.client.delete('/api/shopping', headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['removed'], 1)
+        after = self.client.get('/api/state').get_json()
+        self.assertEqual(after['shopping'], [])
+        self.assertEqual(after['stats']['item_count'], before['stats']['item_count'])
+        self.assertEqual(after['stats']['legacy_count'], before['stats']['legacy_count'])
+
+    def test_clear_one_store_preserves_other_runs_favourites_and_history(self):
+        token = self.setup_owner()
+        headers = {"X-CSRF-Token": token}
+        state = self.client.get('/api/state').get_json()
+        pak_item = next(item for item in state['items'] if item['store'] == "Pak 'n Save")
+        chemist_item = next(item for item in state['items'] if item['store'] == 'Chemist Warehouse')
+        for item in (pak_item, chemist_item):
+            self.client.post('/api/shopping', headers=headers, json={'item_id': item['id'], 'quantity': 1})
+        self.assertEqual(self.client.delete('/api/shopping/store', json={'store': "Pak 'n Save"}).status_code, 403)
+        response = self.client.delete('/api/shopping/store', headers=headers, json={'store': "Pak 'n Save"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['removed'], 1)
+        after = self.client.get('/api/state').get_json()
+        self.assertEqual([entry['item_id'] for entry in after['shopping']], [chemist_item['id']])
+        self.assertEqual(after['stats']['item_count'], state['stats']['item_count'])
+        self.assertEqual(after['stats']['legacy_count'], state['stats']['legacy_count'])
+
+    def test_comparison_finds_cheaper_nearby_store_for_exact_product(self):
+        token = self.setup_owner()
+        headers = {"X-CSRF-Token": token}
+        created = self.client.post('/api/items', headers=headers, json={
+            'name': 'Exact test oats', 'store': "Pak 'n Save", 'category': 'Pantry',
+            'forecast_qty': 1, 'unit_price': 5, 'grocer_product_id': 12345,
+        })
+        item_id = created.get_json()['id']
+        self.client.post('/api/shopping', headers=headers, json={'item_id': item_id, 'quantity': 1})
+        with patch('app.GrocerPriceClient') as client:
+            client.return_value.stores_for_vendor.side_effect = lambda vendor: ({
+                "PAK'nSAVE": [{'id': 1, 'name': "PAK'nSAVE Highland Park"}],
+                'Woolworths': [{'id': 2, 'name': 'Woolworths Botany'}],
+                'New World': [{'id': 3, 'name': 'New World Wellington'}],
+            }[vendor], '')
+            client.return_value.prices_for_store.side_effect = lambda store_id: ({12345: {1: 300, 2: 400}[store_id]}, '')
+            response = self.client.post('/api/shopping/compare-prices', headers=headers, json={'item_ids': [item_id]})
+        self.assertEqual(response.status_code, 200)
+        alternative = response.get_json()['alternatives'][0]
+        self.assertEqual(alternative['store'], 'Woolworths Botany')
+        self.assertEqual(alternative['price'], 4)
+        self.assertEqual(alternative['saved_price'], 5)
+        self.assertEqual(response.get_json()['unavailable'], ['New World'])
+
     def test_quantity_endpoints_reject_fractional_values(self):
         token = self.setup_owner()
         headers = {"X-CSRF-Token": token}
@@ -243,6 +299,19 @@ class HouseholdAppTests(unittest.TestCase):
         october = next(month for month in history["months"] if month["month"] == "2026-10")
         self.assertEqual(october["food"], 0)
         self.assertEqual(october["total"], 35.25)
+
+    def test_overview_spend_includes_manual_entries(self):
+        token = self.setup_owner()
+        headers = {"X-CSRF-Token": token}
+        month = date.today().strftime("%Y-%m")
+        for amount in (25.5, None):
+            response = self.client.post("/api/manual-spend", headers=headers, json={
+                "month": month, "category": "Food", "store": "Butcher", "amount": amount,
+            })
+            self.assertEqual(response.status_code, 201)
+        state = self.client.get("/api/state").get_json()
+        self.assertEqual(state["stats"]["month_spend"], 25.5)
+        self.assertEqual(next(row["total"] for row in state["stats"]["monthly_spend"] if row["month"] == month), 25.5)
 
     def test_manual_monthly_spend_rejects_bad_month_category_and_amount(self):
         token = self.setup_owner()

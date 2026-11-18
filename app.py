@@ -344,8 +344,11 @@ def create_app(test_config=None):
         count_items = len(items)
         list_value = sum(row["quantity"] * row["unit_price"] for row in shopping)
         month_spend = db.execute(
-            "SELECT COALESCE(SUM(total), 0) FROM purchases WHERE purchase_date LIKE ?",
-            (today.strftime("%Y-%m") + "%",),
+            """SELECT COALESCE(SUM(amount), 0) FROM (
+                   SELECT total AS amount FROM purchases WHERE purchase_date LIKE ?
+                   UNION ALL SELECT amount FROM manual_spend WHERE month = ?
+               )""",
+            (today.strftime("%Y-%m") + "%", today.strftime("%Y-%m")),
         ).fetchone()[0]
         history = db.execute(
             "SELECT COUNT(*) AS count, COALESCE(SUM(total), 0) AS total FROM purchases WHERE purchase_date IS NULL"
@@ -363,10 +366,12 @@ def create_app(test_config=None):
             first_month += 12
             first_year -= 1
         month_rows = db.execute(
-            """SELECT substr(purchase_date, 1, 7) AS month, SUM(total) AS total
-               FROM purchases WHERE purchase_date IS NOT NULL AND purchase_date >= ?
-               GROUP BY month ORDER BY month""",
-            (date(first_year, first_month, 1).isoformat(),),
+                """SELECT month, SUM(amount) AS total FROM (
+                         SELECT substr(purchase_date, 1, 7) AS month, total AS amount
+                         FROM purchases WHERE purchase_date IS NOT NULL AND purchase_date >= ?
+                         UNION ALL SELECT month, amount FROM manual_spend WHERE month >= ? AND amount IS NOT NULL
+                    ) GROUP BY month ORDER BY month""",
+                (date(first_year, first_month, 1).isoformat(), date(first_year, first_month, 1).strftime("%Y-%m")),
         ).fetchall()
         return jsonify({
             "user": current_user(),
@@ -728,6 +733,83 @@ def create_app(test_config=None):
         db.execute("DELETE FROM shopping_list WHERE id = ?", (entry_id,))
         db.commit()
         return jsonify({"ok": True})
+
+    @app.delete("/api/shopping")
+    @login_required
+    def clear_shopping():
+        db = get_db()
+        cursor = db.execute("DELETE FROM shopping_list WHERE household_id = ?", (current_user()["household_id"],))
+        db.commit()
+        return jsonify({"ok": True, "removed": cursor.rowcount})
+
+    @app.delete("/api/shopping/store")
+    @login_required
+    def clear_shopping_store():
+        store = required_text(json_body(), "store", 100)
+        db = get_db()
+        cursor = db.execute(
+            """DELETE FROM shopping_list WHERE household_id = ? AND item_id IN
+               (SELECT id FROM items WHERE COALESCE(NULLIF(store, ''), 'Unassigned') = ?)""",
+            (current_user()["household_id"], store),
+        )
+        db.commit()
+        return jsonify({"ok": True, "removed": cursor.rowcount})
+
+    @app.post("/api/shopping/compare-prices")
+    @login_required
+    def compare_shopping_prices():
+        data = json_body()
+        item_ids = data.get("item_ids")
+        if not isinstance(item_ids, list) or not item_ids or len(item_ids) > 100:
+            return error_response("Choose between 1 and 100 shopping items.", 400)
+        ids = [integer_id(value) for value in item_ids]
+        placeholders = ",".join("?" for _ in ids)
+        db = get_db()
+        items = db.execute(
+            f"""SELECT i.id, i.name, i.store, i.unit_price, i.grocer_product_id, i.grocer_product_url
+                FROM items i JOIN shopping_list s ON s.item_id = i.id
+                WHERE s.household_id = ? AND i.id IN ({placeholders})""",
+            (current_user()["household_id"], *ids),
+        ).fetchall()
+        candidates = [item for item in items if item["unit_price"] > 0]
+        if not candidates:
+            return jsonify({"alternatives": [], "checked_stores": [], "unavailable": []})
+        client = GrocerPriceClient(app.config["GROCER_CACHE_DIR"])
+        try:
+            products = client.products() if any(not (item["grocer_product_id"] or grocer_product_id_from_url(item["grocer_product_url"])) for item in candidates) else []
+        except GrocerError as error:
+            return error_response(str(error), 502)
+        nearby_stores = []
+        unavailable = []
+        for vendor in ("PAK'nSAVE", "Woolworths", "New World"):
+            try:
+                stores, _ = client.stores_for_vendor(vendor)
+                nearby = [store for store in stores if re.search(r"\b(botany|highland park)\b", store["name"], re.I)]
+                if not nearby:
+                    unavailable.append(vendor)
+                    continue
+                for store in nearby:
+                    prices, _ = client.prices_for_store(store["id"])
+                    nearby_stores.append((vendor, store, prices))
+            except GrocerError:
+                unavailable.append(vendor)
+        alternatives = []
+        for item in candidates:
+            product_id = item["grocer_product_id"] or grocer_product_id_from_url(item["grocer_product_url"])
+            if not product_id:
+                product = choose_product_match(item["name"], products)
+                product_id = product["id"] if product else None
+            if not product_id:
+                continue
+            own_store = re.sub(r"[^a-z0-9]", "", item["store"].lower())
+            cheaper = [(vendor, store, prices.get(product_id)) for vendor, store, prices in nearby_stores
+                       if re.sub(r"[^a-z0-9]", "", vendor.lower()) not in own_store
+                       and prices.get(product_id) is not None and 0 < prices[product_id] < round(item["unit_price"] * 100)]
+            if cheaper:
+                vendor, store, price = min(cheaper, key=lambda row: row[2])
+                alternatives.append({"item_id": item["id"], "store": store["name"], "price": price / 100,
+                                     "saved_price": item["unit_price"], "product_url": grocer_product_url(product_id, item["name"])})
+        return jsonify({"alternatives": alternatives, "checked_stores": [store["name"] for _, store, _ in nearby_stores], "unavailable": unavailable})
 
     @app.post("/api/shopping/store")
     @login_required

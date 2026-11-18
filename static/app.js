@@ -3,6 +3,7 @@ let csrfToken = '';
 let appState = null;
 let historyState = null;
 let selectedHistoryMonth = '';
+const priceAlternatives = new Map();
 let toastTimer;
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -40,11 +41,11 @@ async function boot() {
 function showAuth(needsSetup) {
   $('#app-shell').hidden = true;
   $('#auth-screen').hidden = false;
-  $('#auth-title').innerHTML = needsSetup ? 'Make this place<br>your own.' : 'Your next run,<br>in good order.';
+  $('#auth-title').innerHTML = needsSetup ? 'Make this place<br>your own.' : 'Know where<br>your money goes.';
   $('#auth-eyebrow').textContent = needsSetup ? 'FIRST-TIME SETUP' : 'HOUSEHOLD ACCESS';
   $('#auth-copy').textContent = needsSetup
     ? 'Create the owner sign-in. You can add the rest of the household after.'
-    : 'Sign in to see the shared list and latest prices.';
+    : 'Sign in to see your household spending and store runs.';
   $('#auth-name-wrap').hidden = !needsSetup;
   $('#auth-form [name="username"]').autocomplete = needsSetup ? 'username' : 'username';
   $('#auth-form [name="password"]').autocomplete = needsSetup ? 'new-password' : 'current-password';
@@ -74,8 +75,6 @@ function renderAll() {
   renderStoreLists();
   renderPricingSettings();
   renderShopping();
-  renderCatalog();
-  renderRecent();
   if (historyState) renderHistory();
 }
 
@@ -130,11 +129,13 @@ function renderChart(rows, legacyRows) {
 }
 
 function shoppingRow(item, includeStore = true) {
-  const meta = [item.category, item.note].filter(Boolean).map(escapeHtml).join(' · ');
+  const meta = [String(item.store || '').toLowerCase().includes('chemist warehouse') ? '' : item.category, item.note].filter(Boolean).map(escapeHtml).join(' · ');
+  const alternative = priceAlternatives.get(item.item_id);
+  const saving = alternative ? `<a class="price-alternative" href="${escapeHtml(alternative.product_url)}" target="_blank" rel="noopener" title="Open this product on Grocer">${money(alternative.price)} at ${escapeHtml(alternative.store)} · saved price ${money(alternative.saved_price)} ↗</a>` : '';
   const link = retailerLinkMarkup(item);
   const grocerLink = item.grocer_product_url ? grocerLinkMarkup(item) : '';
   return `<div class="shopping-row ${includeStore ? '' : 'overview-row'}" data-entry="${item.id}">
-    <div class="shopping-row-main"><div class="item-name">${escapeHtml(item.name)}</div><div class="item-meta">${meta || 'Household regular'}</div></div>
+    <div class="shopping-row-main"><div class="item-name">${escapeHtml(item.name)}</div><div class="item-meta">${meta || 'Household regular'}</div>${saving}</div>
     <div class="row-price">${money(item.unit_price * item.quantity)}</div>
     <div class="quantity-control"><button class="small-action" data-action="adjust-quantity" data-item="${item.item_id}" data-delta="-1" title="Reduce quantity" aria-label="Reduce ${escapeHtml(item.name)} quantity">−</button><span>${escapeHtml(item.quantity)}</span><button class="small-action" data-action="adjust-quantity" data-item="${item.item_id}" data-delta="1" title="Increase quantity" aria-label="Increase ${escapeHtml(item.name)} quantity">＋</button></div>
     <div class="row-actions">${includeStore ? `${grocerLink}${link}<button class="small-action" data-action="edit-item" data-item="${item.item_id}" title="Edit item" aria-label="Edit ${escapeHtml(item.name)}">✎</button>` : ''}<button class="small-action bought" data-action="bought" data-item="${item.item_id}" title="Mark purchased" aria-label="Mark ${escapeHtml(item.name)} purchased">✓</button><button class="small-action remove" data-action="remove-list" data-entry="${item.id}" title="Remove from list" aria-label="Remove ${escapeHtml(item.name)} from list">×</button></div>
@@ -216,17 +217,20 @@ function renderShopping() {
       const category = storeListCategory(item.category);
       categories.get(category).push(item);
     }
-    const sections = [...categories.entries()].map(([category, categoryItems]) => {
+    const sections = String(store).toLowerCase().includes('chemist warehouse')
+      ? list.map(item => shoppingRow(item)).join('')
+      : [...categories.entries()].filter(([, categoryItems]) => categoryItems.length).map(([category, categoryItems]) => {
       const categoryTotal = categoryItems.reduce((sum, item) => sum + item.unit_price * item.quantity, 0);
       return `<section class="shopping-category"><div class="shopping-category-heading"><h3>${category}</h3><span>${categoryItems.length} ${categoryItems.length === 1 ? 'ITEM' : 'ITEMS'}</span><strong>${money(categoryTotal)}</strong></div>${categoryItems.map(item => shoppingRow(item)).join('')}</section>`;
     }).join('');
-    return `<section class="store-group"><div class="store-group-heading"><h2>${escapeHtml(store)}</h2><span>${list.length} ${list.length === 1 ? 'ITEM' : 'ITEMS'}</span></div>${sections}<div class="store-total">STORE ESTIMATE <strong>${money(total)}</strong></div></section>`;
+    return `<section class="store-group"><div class="store-group-heading"><div><h2>${escapeHtml(store)}</h2><span>${list.length} ${list.length === 1 ? 'ITEM' : 'ITEMS'}</span></div><button class="button button-quiet remove-store-run" data-action="remove-store-run" data-store="${escapeHtml(store)}" aria-label="Remove ${escapeHtml(store)} run">Remove store run</button></div>${sections}<div class="store-total">STORE ESTIMATE <strong>${money(total)}</strong></div></section>`;
   }).join('');
   $('#shopping-empty').hidden = shopping.length > 0;
   $('#full-shopping').hidden = matches.length === 0;
   $('#shopping-search-empty').hidden = shopping.length === 0 || matches.length > 0;
   $('#shopping-search-count').textContent = query ? `${matches.length} of ${shopping.length} items` : `${shopping.length} ${shopping.length === 1 ? 'ITEM' : 'ITEMS'}`;
   $('#shopping-total').textContent = money(shopping.reduce((sum, item) => sum + item.unit_price * item.quantity, 0));
+  $('#clear-shopping-button').disabled = shopping.length === 0;
   const select = $('#add-item-select');
   const previous = select.value;
   select.innerHTML = '<option value="">Choose an item…</option>' + items.map(item => `<option value="${item.id}">${escapeHtml(item.name)} · ${escapeHtml(item.store)}</option>`).join('');
@@ -275,6 +279,7 @@ function renderStoreLists() {
   if (stores.includes(previous)) select.value = previous;
   else if (stores.includes("Pak 'n Save")) select.value = "Pak 'n Save";
   const store = select.value;
+  $('#favourite-store-tabs').innerHTML = stores.map(name => `<button type="button" class="store-tab ${name === store ? 'active' : ''}" data-action="favourite-store" data-store="${escapeHtml(name)}" aria-pressed="${name === store}">${escapeHtml(name)} <span>${grouped.get(name).length}</span></button>`).join('');
   const items = grouped.get(store) || [];
   const query = ($('#fixed-list-search')?.value || '').trim().toLowerCase();
   const visibleItems = items.filter(item => `${item.name} ${item.category} ${item.store}`.toLowerCase().includes(query));
@@ -294,11 +299,11 @@ function renderStoreLists() {
     ['Food', []],
     ['Household', []],
   ]);
-  for (const item of visibleItems) categories.get(storeListCategory(item.category)).push(item);
+  for (const item of visibleItems) categories.get(String(store).toLowerCase().includes('chemist warehouse') ? 'Household' : storeListCategory(item.category)).push(item);
   $('#fixed-list-table').innerHTML = [...categories.entries()].filter(([, groupItems]) => groupItems.length > 0).map(([category, groupItems]) => {
     const categoryTotal = groupItems.reduce((sum, item) => sum + Number(item.forecast_qty || 0) * Number(item.unit_price || 0), 0);
     const rows = groupItems.map(item => {
-      const sourceCategory = storeListCategory(item.category) === item.category ? '' : item.category;
+      const sourceCategory = String(store).toLowerCase().includes('chemist warehouse') || storeListCategory(item.category) === item.category ? '' : item.category;
       const grocerLink = grocerLinkMarkup(item);
       const retailerLink = retailerLinkMarkup(item);
       return `<article class="fixed-list-row ${Number(item.forecast_qty) <= 0 ? 'zero-quantity' : ''}" data-fixed-item="${item.id}">
@@ -306,10 +311,11 @@ function renderStoreLists() {
         <label class="fixed-quantity"><span class="visually-hidden">Usual quantity for ${escapeHtml(item.name)}</span><input type="number" min="0" max="100000" step="1" value="${escapeHtml(item.forecast_qty)}" data-fixed-quantity="${item.id}" aria-label="Usual quantity for ${escapeHtml(item.name)}"><span>qty</span></label>
         <div class="fixed-list-unit">${money(item.unit_price)} each</div>
         <div class="fixed-line-total">${money(Number(item.forecast_qty) * Number(item.unit_price))}</div>
-        <div class="fixed-list-actions">${grocerLink}${retailerLink}<button class="small-action" data-action="add-list" data-item="${item.id}" title="Add usual quantity to Store Run list" aria-label="Add ${escapeHtml(item.name)} to Store Run list">＋</button><button class="small-action" data-action="edit-item" data-item="${item.id}" title="Edit item" aria-label="Edit ${escapeHtml(item.name)}">✎</button></div>
+        <div class="fixed-list-actions">${grocerLink}${retailerLink}<button class="small-action" data-action="add-list" data-item="${item.id}" title="Add usual quantity to store run" aria-label="Add ${escapeHtml(item.name)} to store run">＋</button><button class="small-action" data-action="edit-item" data-item="${item.id}" title="Edit favourite" aria-label="Edit ${escapeHtml(item.name)}">✎</button><button class="small-action remove" data-action="archive-item" data-item="${item.id}" title="Remove favourite" aria-label="Remove ${escapeHtml(item.name)} from favourites">×</button></div>
       </article>`;
     }).join('');
-    return `<section class="fixed-category-group"><header class="fixed-category-heading"><h2>${category}</h2><span>${groupItems.length} ${groupItems.length === 1 ? 'ITEM' : 'ITEMS'}</span><strong>${money(categoryTotal)}</strong></header>${rows}</section>`;
+    const heading = String(store).toLowerCase().includes('chemist warehouse') ? '' : `<header class="fixed-category-heading"><h2>${category}</h2><span>${groupItems.length} ${groupItems.length === 1 ? 'ITEM' : 'ITEMS'}</span><strong>${money(categoryTotal)}</strong></header>`;
+    return `<section class="fixed-category-group">${heading}${rows}</section>`;
   }).join('');
 }
 
@@ -425,6 +431,7 @@ async function useStoreList() {
     await refreshState();
     showToast(`${result.added} ${result.added === 1 ? 'item' : 'items'} from ${store} added to this run.`);
     switchView('shopping');
+    compareShoppingPrices(appState.shopping.filter(item => item.store === store).map(item => item.item_id));
   } catch (error) {
     showToast(error.message);
   }
@@ -453,40 +460,8 @@ async function handoffPaknSaveList(event) {
     await navigator.clipboard.writeText(lines.join('\n'));
     showToast(`Copied ${items.length} items. Pak’n Save opened in a new tab; add the items to your account cart there.`);
   } catch (_error) {
-    showToast('Pak’n Save opened. Clipboard access was blocked; copy the list manually from Store lists.');
+    showToast('Pak’n Save opened. Clipboard access was blocked; copy the list manually from Store favourites.');
   }
-}
-
-function renderCatalog() {
-  const query = ($('#catalog-search').value || '').trim().toLowerCase();
-  const items = appState.items.filter(item => `${item.name} ${item.store} ${item.category}`.toLowerCase().includes(query));
-  $('#catalog-count').textContent = `${items.length} ${items.length === 1 ? 'ITEM' : 'ITEMS'}`;
-  $('#catalog-list').hidden = items.length === 0;
-  $('#catalog-empty').hidden = appState.items.length > 0;
-  if (appState.items.length > 0 && items.length === 0) {
-    $('#catalog-list').innerHTML = '<div class="empty-inline">No catalog items match that search.</div>';
-    $('#catalog-list').hidden = false;
-    return;
-  }
-  $('#catalog-list').innerHTML = items.map(item => `<article class="catalog-row">
-    <div class="catalog-main"><div class="item-name">${escapeHtml(item.name)}</div><div class="catalog-category">${escapeHtml(item.category)}</div></div>
-    <div class="catalog-store">${escapeHtml(item.store)}</div>
-    <div class="catalog-qty">Usual qty ${escapeHtml(item.forecast_qty)}</div>
-    <div class="catalog-price">${money(item.unit_price)} <span class="item-meta">/ ea</span></div>
-    <div class="catalog-actions">${retailerLinkMarkup(item)}<button class="small-action" data-action="add-list" data-item="${item.id}" title="Add to shopping list" aria-label="Add ${escapeHtml(item.name)} to shopping list">＋</button><button class="small-action" data-action="edit-item" data-item="${item.id}" title="Edit item" aria-label="Edit ${escapeHtml(item.name)}">✎</button></div>
-  </article>`).join('');
-}
-
-function renderRecent() {
-  const recent = appState.recent;
-  $('#purchases-empty').hidden = recent.length > 0;
-  $('.purchase-table-wrap').hidden = recent.length === 0;
-  $('#recent-purchases').innerHTML = recent.map(item => {
-    const when = item.purchase_date
-      ? new Intl.DateTimeFormat('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${item.purchase_date}T12:00:00`))
-      : `${escapeHtml(item.source_period)} · year unknown`;
-    return `<tr><td>${escapeHtml(item.item_name)}<div class="item-meta">Qty ${escapeHtml(item.quantity)} × ${money(item.unit_price)}</div></td><td>${escapeHtml(item.store || '—')}</td><td>${when}</td><td class="align-right">${money(item.total)}</td><td class="purchase-delete-cell"><button class="small-action purchase-delete" data-action="delete-purchase" data-purchase="${item.id}" title="Remove this purchase" aria-label="Remove purchase of ${escapeHtml(item.item_name)}">×</button></td></tr>`;
-  }).join('');
 }
 
 async function loadHistory() {
@@ -503,17 +478,19 @@ function renderHistory() {
   const { months, categories, stores, highlights, undated_legacy: undated } = historyState;
   $('#history-range').textContent = `${new Intl.DateTimeFormat('en-NZ', { month: 'long', year: 'numeric' }).format(new Date(`${months[0].month}-01T12:00:00`))} to ${new Intl.DateTimeFormat('en-NZ', { month: 'long', year: 'numeric' }).format(new Date(`${months.at(-1).month}-01T12:00:00`))}`;
   $('#history-total').textContent = money(highlights.total_spend);
-  $('#history-average').textContent = money(highlights.average_active_month);
-  $('#history-purchase-count').textContent = highlights.purchase_count;
-  $('#history-undated-total').textContent = money(undated.total);
-  $('#history-undated-count').textContent = `${undated.count} entries · year unknown`;
+  $('#history-current-total').textContent = money(months.at(-1).total);
+  const currentYear = months.at(-1).month.slice(0, 4);
+  $('#history-year-total').textContent = money(months.filter(month => month.month.startsWith(currentYear)).reduce((total, month) => total + Number(month.total), 0));
   const maxMonth = Math.max(...months.map(month => Number(month.total)), 0);
+  $('#history-chart-unknown').hidden = !months.some(month => month.unknown_amount_count);
+  const points = months.map((month, index) => `${index * 80 + 40},${180 - (maxMonth ? Number(month.total) / maxMonth * 145 : 0)}`).join(' ');
+  const line = `<svg class="history-line" viewBox="0 0 960 200" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}"></polyline></svg>`;
   $('#history-chart').innerHTML = months.map(month => {
-    const foodHeight = maxMonth ? Number(month.food) / maxMonth * 100 : 0;
-    const householdHeight = maxMonth ? Number(month.household) / maxMonth * 100 : 0;
     const label = new Intl.DateTimeFormat('en-NZ', { month: 'short' }).format(new Date(`${month.month}-01T12:00:00`));
-    return `<div class="history-month-column" title="${escapeHtml(month.label)}: ${money(month.total)} · Food ${money(month.food)} · Household ${money(month.household)}"><div class="history-stack"><span class="history-segment food" style="height:${foodHeight}%"></span><span class="history-segment household" style="height:${householdHeight}%"></span></div><span class="history-month-label">${label}</span></div>`;
-  }).join('');
+    const unknownLabel = month.unknown_amount_count ? ` · ${month.unknown_amount_count} amount(s) not recorded` : '';
+    const position = maxMonth ? Number(month.total) / maxMonth * 145 : 0;
+    return `<button type="button" class="history-line-point" data-action="view-history-month" data-month="${month.month}" aria-label="${escapeHtml(month.label)}: ${money(month.total)} known total${escapeHtml(unknownLabel)}" style="--point-height:${position}px"><span class="history-month-value">${money(month.total)}${month.unknown_amount_count ? '*' : ''}</span><span class="history-dot" aria-hidden="true"></span><span class="history-month-label">${label}</span></button>`;
+  }).join('') + line;
   const nonzeroCategories = categories.filter(row => row.total > 0);
   const categoryMax = Math.max(...nonzeroCategories.map(row => row.total), 1);
   $('#history-categories').innerHTML = nonzeroCategories.length
@@ -526,17 +503,6 @@ function renderHistory() {
   $('#history-months').innerHTML = months.slice().reverse().map(month => {
     const current = month.month === months.at(-1).month ? 'current-month' : '';
     return `<tr class="${current}"><td><button class="history-month-trigger" data-action="view-history-month" data-month="${month.month}">${escapeHtml(month.label)}</button></td><td class="align-right">${money(month.food)}</td><td class="align-right">${money(month.household)}</td><td class="align-right"><strong>${money(month.total)}</strong>${month.unknown_amount_count ? `<div class="unknown-amount-note">${month.unknown_amount_count} unknown amount${month.unknown_amount_count === 1 ? '' : 's'}</div>` : ''}</td></tr>`;
-  }).join('');
-  $('#history-purchases-empty').hidden = historyState.purchases.length > 0;
-  $('#history-purchases').innerHTML = historyState.purchases.slice().reverse().map(purchase => {
-    const when = new Intl.DateTimeFormat('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${purchase.purchase_date}T12:00:00`));
-    return `<tr><td>${escapeHtml(purchase.item_name)}<div class="item-meta">Qty ${escapeHtml(purchase.quantity)} × ${money(purchase.unit_price)}</div></td><td>${escapeHtml(purchase.category)}</td><td>${escapeHtml(purchase.store || '—')}</td><td>${when}</td><td class="align-right">${money(purchase.total)}</td><td class="purchase-delete-cell"><button class="small-action purchase-delete" data-action="delete-purchase" data-purchase="${purchase.id}" title="Remove this purchase" aria-label="Remove purchase of ${escapeHtml(purchase.item_name)}">×</button></td></tr>`;
-  }).join('');
-  $('#manual-spend-empty').hidden = historyState.manual_spend.length > 0;
-  $('#manual-spend-rows').innerHTML = historyState.manual_spend.map(entry => {
-    const month = new Intl.DateTimeFormat('en-NZ', { month: 'short', year: 'numeric' }).format(new Date(`${entry.month}-01T12:00:00`));
-    const description = [entry.store, entry.detail, entry.note].filter(Boolean).map(escapeHtml).join(' · ');
-    return `<tr><td>${month}</td><td>${escapeHtml(entry.category)}</td><td>${description || '—'}</td><td class="align-right">${entry.amount === null ? '<span class="amount-unknown">Not recorded</span>' : money(entry.amount)}</td><td class="purchase-delete-cell"><button class="small-action purchase-delete" data-action="delete-manual-spend" data-entry="${entry.id}" title="Remove store run entry" aria-label="Remove ${escapeHtml(entry.category)} spend at ${escapeHtml(entry.store)} for ${month}">×</button></td></tr>`;
   }).join('');
   $('#history-empty').hidden = highlights.purchase_count > 0;
   $('#history-legacy-note').hidden = undated.count === 0;
@@ -557,38 +523,38 @@ function openHistoryMonth(monthKey) {
   selectedHistoryMonth = monthKey;
   const monthPurchases = historyState.purchases.filter(purchase => purchase.purchase_date?.slice(0, 7) === monthKey);
   const monthManualSpend = historyState.manual_spend.filter(entry => entry.month === monthKey);
-  const manualGroups = new Map();
+  const groups = new Map();
+  for (const purchase of monthPurchases) {
+    const store = purchase.store || 'Unassigned';
+    if (!groups.has(store)) groups.set(store, { purchases: [], entries: [] });
+    groups.get(store).purchases.push(purchase);
+  }
   for (const entry of monthManualSpend) {
-    const key = `${entry.category}\u0000${entry.store}\u0000${entry.detail || 'General'}`;
-    const group = manualGroups.get(key) || {
-      category: entry.category,
-      store: entry.store,
-      detail: entry.detail || 'General',
-      amount: 0,
-      unknownAmountCount: 0,
-      notes: [],
-    };
-    if (entry.amount === null) group.unknownAmountCount += 1;
-    else group.amount += Number(entry.amount);
-    if (entry.note && !group.notes.includes(entry.note)) group.notes.push(entry.note);
-    manualGroups.set(key, group);
+    const store = entry.store || 'Unassigned';
+    if (!groups.has(store)) groups.set(store, { purchases: [], entries: [] });
+    groups.get(store).entries.push(entry);
   }
   const monthLabel = new Intl.DateTimeFormat('en-NZ', { month: 'long', year: 'numeric' }).format(new Date(`${monthKey}-01T12:00:00`));
   $('#history-month-title').textContent = monthLabel;
-  $('#history-month-purchase-empty').hidden = monthPurchases.length > 0;
-  $('#history-month-purchases').innerHTML = monthPurchases.slice().reverse().map(purchase => {
-    const when = new Intl.DateTimeFormat('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${purchase.purchase_date}T12:00:00`));
-    return `<article class="history-purchase-card"><div class="history-purchase-main"><strong>${escapeHtml(purchase.item_name)}</strong><span>${escapeHtml(when)} · ${escapeHtml(purchase.store || '—')} · ${escapeHtml(purchase.category)}</span><span>Qty ${escapeHtml(purchase.quantity)} · Total <strong>${money(purchase.total)}</strong></span></div><label class="history-price-field">Unit price<input type="number" min="0" step="0.01" required value="${Number(purchase.unit_price).toFixed(2)}" data-purchase-price="${purchase.id}" aria-label="Unit price for ${escapeHtml(purchase.item_name)}"></label><div class="history-purchase-actions"><button class="button button-quiet" data-action="update-purchase-price" data-purchase="${purchase.id}">Save price</button><button class="small-action purchase-delete" data-action="delete-purchase" data-purchase="${purchase.id}" title="Remove this purchase" aria-label="Remove purchase of ${escapeHtml(purchase.item_name)}">×</button></div></article>`;
+  const month = historyState.months.find(entry => entry.month === monthKey);
+  $('#history-month-total').textContent = month ? `Known total ${money(month.total)}${month.unknown_amount_count ? ` · ${month.unknown_amount_count} amount(s) not recorded` : ''}` : '';
+  $('#history-month-purchase-empty').hidden = groups.size > 0;
+  $('#history-month-purchases').innerHTML = [...groups.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([store, group]) => {
+    const subtotal = group.purchases.reduce((sum, purchase) => sum + Number(purchase.total), 0) + group.entries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    const unknown = group.entries.filter(entry => entry.amount === null).length;
+    const purchases = group.purchases.slice().reverse().map(purchase => {
+      const when = new Intl.DateTimeFormat('en-NZ', { day: 'numeric', month: 'short' }).format(new Date(`${purchase.purchase_date}T12:00:00`));
+      return `<article class="history-purchase-card"><div class="history-purchase-main"><strong>${escapeHtml(purchase.item_name)}</strong><span>${escapeHtml(when)} · ${escapeHtml(purchase.category)} · Qty ${escapeHtml(purchase.quantity)}</span><span>Total <strong>${money(purchase.total)}</strong></span></div><label class="history-price-field">Unit price<input type="number" min="0" step="0.01" value="${Number(purchase.unit_price).toFixed(2)}" data-purchase-price="${purchase.id}" aria-label="Unit price for ${escapeHtml(purchase.item_name)}"></label><div class="history-purchase-actions"><button class="button button-quiet" data-action="update-purchase-price" data-purchase="${purchase.id}">Save price</button><button class="small-action purchase-delete" data-action="delete-purchase" data-purchase="${purchase.id}" title="Remove purchase" aria-label="Remove ${escapeHtml(purchase.item_name)}">×</button></div></article>`;
+    }).join('');
+    const entries = group.entries.map(entry => `<article class="history-purchase-card"><div class="history-purchase-main"><strong>${escapeHtml(entry.detail || entry.category)}</strong><span>${escapeHtml(entry.category)}${entry.note ? ` · ${escapeHtml(entry.note)}` : ''}</span><span>${entry.amount === null ? 'Amount not recorded' : money(entry.amount)}</span></div><div class="history-purchase-actions"><button class="small-action purchase-delete" data-action="delete-manual-spend" data-entry="${entry.id}" title="Remove entry" aria-label="Remove ${escapeHtml(entry.detail || entry.category)} entry">×</button></div></article>`).join('');
+    return `<section class="month-store"><header class="month-store-header"><div><h2>${escapeHtml(store)}</h2><span>Subtotal ${money(subtotal)}${unknown ? ` · ${unknown} unknown` : ''}</span></div><button class="button button-quiet" data-action="add-month-entry" data-store="${escapeHtml(store)}">＋ Add entry</button></header>${purchases}${entries}</section>`;
   }).join('');
-  $('#history-month-manual').innerHTML = monthManualSpend.length
-    ? `<div class="history-manual-summary"><strong>Store runs &amp; offline purchases</strong>${[...manualGroups.values()].map(group => `<div class="history-manual-entry"><span><b>${escapeHtml(group.category)}</b> · ${escapeHtml(group.store)} · ${escapeHtml(group.detail)}${group.notes.length ? `<small>${group.notes.map(escapeHtml).join(' · ')}</small>` : ''}</span><strong>${group.amount ? money(group.amount) : ''}${group.unknownAmountCount ? `<small>${group.unknownAmountCount} amount${group.unknownAmountCount === 1 ? '' : 's'} not recorded</small>` : ''}${!group.amount && !group.unknownAmountCount ? money(0) : ''}</strong></div>`).join('')}</div>`
-    : '';
-  $('#history-month-modal').showModal();
+  switchView('history-month');
 }
 
 function switchView(viewName) {
   $$('.view').forEach(view => view.classList.toggle('active', view.id === `view-${viewName}`));
-  $$('.nav-link').forEach(link => link.classList.toggle('active', link.dataset.view === viewName));
+  $$('.nav-link').forEach(link => link.classList.toggle('active', link.dataset.view === (viewName === 'history-month' ? 'history' : viewName)));
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -683,7 +649,6 @@ async function refreshOneItemPrice() {
     $('#item-form').elements.unit_price.value = result.price.toFixed(2);
     $('#item-price-refresh-time').textContent = `Last refreshed from ${result.store_name}: ${new Intl.DateTimeFormat('en-NZ', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(result.refreshed_at))}`;
     renderStoreLists();
-    renderCatalog();
     feedback.textContent = `${result.name} updated to ${money(result.price)}.`;
   } catch (error) {
     feedback.textContent = error.message;
@@ -708,7 +673,7 @@ async function submitItem(event) {
     await api(id ? `/api/items/${id}` : '/api/items', { method: id ? 'PUT' : 'POST', body: data });
     $('#item-modal').close();
     await refreshState();
-    showToast(id ? 'Catalog item updated.' : 'Catalog item added.');
+    showToast(id ? 'Favourite updated.' : 'Favourite added.');
   } catch (error) {
     $('#item-message').textContent = error.message;
   }
@@ -740,16 +705,18 @@ async function submitManualSpend(event) {
     form.reset();
     await loadHistory();
     await refreshState();
+    if ($('#view-history-month').classList.contains('active')) openHistoryMonth(selectedHistoryMonth);
     showToast('Store run added to History.');
   } catch (error) {
     $('#manual-spend-message').textContent = error.message;
   }
 }
 
-function openManualSpendModal() {
+function openManualSpendModal(month = '', store = '') {
   const form = $('#manual-spend-form');
   form.reset();
-  form.elements.month.value = new Date().toISOString().slice(0, 7);
+  form.elements.month.value = month || new Date().toLocaleDateString('en-CA').slice(0, 7);
+  form.elements.store.value = store;
   $('#manual-spend-message').textContent = '';
   $('#manual-spend-modal').showModal();
 }
@@ -783,9 +750,31 @@ async function handleAction(event) {
   try {
     if (action === 'view-history-month') {
       openHistoryMonth(button.dataset.month);
+    } else if (action === 'history-current-month') {
+      openHistoryMonth(historyState.months.at(-1).month);
+    } else if (action === 'history-year-to-date' || action === 'history-twelve-months') {
+      const year = historyState.months.at(-1).month.slice(0, 4);
+      $$('#history-months tr').forEach(row => {
+        row.hidden = action === 'history-year-to-date' && !row.querySelector('[data-month]').dataset.month.startsWith(year);
+      });
+      $('#history-months-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      $('#history-months-section').focus({ preventScroll: true });
+    } else if (action === 'add-month-entry') {
+      openManualSpendModal(selectedHistoryMonth, button.dataset.store || '');
+    } else if (action === 'favourite-store') {
+      $('#fixed-store-select').value = button.dataset.store;
+      renderStoreLists();
+      renderPricingSettings();
+    } else if (action === 'remove-store-run') {
+      const store = button.dataset.store;
+      if (!window.confirm(`Remove every ${store} item from the current run? Your favourites and purchase history will remain.`)) return;
+      await api('/api/shopping/store', { method: 'DELETE', body: { store } });
+      for (const entry of appState.shopping.filter(item => (item.store || 'Unassigned') === store)) priceAlternatives.delete(entry.item_id);
+      await refreshState();
+      showToast(`${store} run removed.`);
     } else if (action === 'update-purchase-price') {
       const purchaseId = Number(button.dataset.purchase);
-      const priceInput = $(`[data-purchase-price="${purchaseId}"]`, $('#history-month-modal'));
+      const priceInput = $(`[data-purchase-price="${purchaseId}"]`, $('#view-history-month'));
       const unitPrice = Number(priceInput?.value);
       if (!priceInput?.value.trim() || !Number.isFinite(unitPrice) || unitPrice < 0) return showToast('Enter a valid non-negative unit price.');
       await api(`/api/purchases/${purchaseId}`, { method: 'PUT', body: { unit_price: unitPrice } });
@@ -794,7 +783,9 @@ async function handleAction(event) {
       await refreshState();
       showToast('Purchase price updated.');
     } else if (action === 'remove-list') {
+      const removedItem = appState.shopping.find(entry => entry.id === Number(button.dataset.entry));
       await api(`/api/shopping/${button.dataset.entry}`, { method: 'DELETE' });
+      if (removedItem) priceAlternatives.delete(removedItem.item_id);
       await refreshState();
     } else if (action === 'adjust-quantity') {
       const item = appState.shopping.find(entry => entry.item_id === Number(button.dataset.item));
@@ -802,6 +793,7 @@ async function handleAction(event) {
       const quantity = item.quantity + Number(button.dataset.delta);
       if (quantity <= 0) {
         await api(`/api/shopping/${item.id}`, { method: 'DELETE' });
+        priceAlternatives.delete(item.item_id);
       } else {
         await api('/api/shopping', { method: 'POST', body: { item_id: item.item_id, quantity, note: item.note } });
       }
@@ -810,22 +802,25 @@ async function handleAction(event) {
       const item = appState.shopping.find(entry => entry.item_id === Number(button.dataset.item));
       if (!item) return;
       await api('/api/purchases', { method: 'POST', body: { item_id: item.item_id, quantity: item.quantity, unit_price: item.unit_price } });
+      priceAlternatives.delete(item.item_id);
       await refreshState();
       if (historyState) await loadHistory();
-      showToast('Added to the purchase log.');
+      showToast('Added to history.');
     } else if (action === 'delete-purchase') {
       const purchaseId = Number(button.dataset.purchase);
       if (!Number.isInteger(purchaseId) || !window.confirm('Remove this purchase record? Spend totals and history highlights will be recalculated.')) return;
       await api(`/api/purchases/${purchaseId}`, { method: 'DELETE' });
       await refreshState();
       await loadHistory();
-      if ($('#history-month-modal').open) openHistoryMonth(selectedHistoryMonth);
+      if ($('#view-history-month').classList.contains('active')) openHistoryMonth(selectedHistoryMonth);
       showToast('Purchase record removed.');
     } else if (action === 'delete-manual-spend') {
       const entryId = Number(button.dataset.entry);
       if (!Number.isInteger(entryId) || !window.confirm('Remove this manual monthly spend entry? History totals will be recalculated.')) return;
       await api(`/api/manual-spend/${entryId}`, { method: 'DELETE' });
       await loadHistory();
+      await refreshState();
+      if ($('#view-history-month').classList.contains('active')) openHistoryMonth(selectedHistoryMonth);
       showToast('Manual spend entry removed.');
     } else if (action === 'add-list') {
       const item = appState.items.find(entry => entry.id === Number(button.dataset.item));
@@ -841,7 +836,7 @@ async function handleAction(event) {
       showToast(`Selected ${button.dataset.productName}. Save the item to use this match on refresh.`);
     } else if (action === 'archive-item') {
       const item = appState.items.find(entry => entry.id === Number(button.dataset.item));
-      if (item && window.confirm(`Remove ${item.name} from the catalog? Purchase history will remain.`)) {
+      if (item && window.confirm(`Remove ${item.name} from favourites and the current run? Purchase history will remain.`)) {
         await api(`/api/items/${item.id}`, { method: 'DELETE' });
         await refreshState();
       }
@@ -854,7 +849,26 @@ async function handleAction(event) {
 async function addItemToList(item, quantity = item.forecast_qty || 1) {
   await api('/api/shopping', { method: 'POST', body: { item_id: item.id, quantity } });
   await refreshState();
-  showToast('Added to the shopping list.');
+  showToast('Added to the store run.');
+  compareShoppingPrices([item.id]);
+}
+
+async function compareShoppingPrices(itemIds) {
+  for (let offset = 0; offset < itemIds.length; offset += 100) {
+    const batch = itemIds.slice(offset, offset + 100);
+    try {
+      const result = await api('/api/shopping/compare-prices', { method: 'POST', body: { item_ids: batch } });
+      for (const id of batch) priceAlternatives.delete(id);
+      for (const alternative of result.alternatives) {
+        if (appState?.shopping.some(item => item.item_id === alternative.item_id)) priceAlternatives.set(alternative.item_id, alternative);
+      }
+      if (appState) { renderOverview(); renderShopping(); }
+      if (result.alternatives.length) showToast(`${result.alternatives.length} item(s) may be cheaper at a nearby store${result.unavailable.length ? '; some stores could not be checked' : ''}.`);
+      else if (result.unavailable.length) showToast('Grocer comparison incomplete; some nearby stores could not be checked.');
+    } catch (error) {
+      showToast('Grocer price comparison unavailable. Your list is unchanged.');
+    }
+  }
 }
 
 $('#auth-form').addEventListener('submit', submitAuth);
@@ -862,7 +876,6 @@ $('#item-form').addEventListener('submit', submitItem);
 $('#member-form').addEventListener('submit', submitMember);
 $('#manual-spend-form').addEventListener('submit', submitManualSpend);
 $('#household-form').addEventListener('submit', submitHousehold);
-$('#catalog-search').addEventListener('input', renderCatalog);
 $('#shopping-search').addEventListener('input', renderShopping);
 $('#fixed-list-search').addEventListener('input', renderStoreLists);
 $('#fixed-store-select').addEventListener('change', () => {
@@ -885,7 +898,18 @@ $('#use-store-list-button').addEventListener('click', useStoreList);
 $('#paknsave-handoff-button').addEventListener('click', event => { handoffPaknSaveList(event); });
 $('#export-button').addEventListener('click', () => { window.location.href = '/api/export.csv'; });
 $('#history-refresh-button').addEventListener('click', loadHistory);
-$('#add-manual-spend-button').addEventListener('click', openManualSpendModal);
+$('#add-manual-spend-button').addEventListener('click', () => openManualSpendModal());
+$('#clear-shopping-button').addEventListener('click', async () => {
+  if (!appState?.shopping.length || !window.confirm('Clear every store from the current run? Your favourites and purchase history will remain.')) return;
+  try {
+    await api('/api/shopping', { method: 'DELETE' });
+    priceAlternatives.clear();
+    await refreshState();
+    showToast('All store runs cleared.');
+  } catch (error) {
+    showToast(error.message);
+  }
+});
 $('#household-button').addEventListener('click', openHouseholdModal);
 $('#member-button').addEventListener('click', () => {
   $('#member-message').textContent = '';
